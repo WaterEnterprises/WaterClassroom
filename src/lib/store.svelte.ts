@@ -320,6 +320,10 @@ export const appState = $state({
   institutionTutors: [] as Array<{ id: string; name: string; email: string; subjects: string[]; grade_levels: string[] }>,
   // Seat-based billing: paid student spots vs consumed.
   institutionSeats: { paid: 50, used: 0 } as { paid: number; used: number },
+  // Profile → Payments: seat purchase ledger + this-month totals.
+  seatPurchases: [] as Array<{ id: string; spots: number; billing_cycle: string; amount_cents: number; created_at: string }>,
+  seatMonth: { year: 0, month: 0, spots: 0, amount_cents: 0 } as { year: number; month: number; spots: number; amount_cents: number },
+  isSeatPurchasesLoading: false,
   isAdminLoading: false,
   adminError: "" as string,
   assignedTutorId: "" as string,
@@ -1267,6 +1271,19 @@ export async function fetchStudentsSummary() {
     appState.studentsSummary = data.tracks || [];
   } catch { /* screen shows the empty state */ }
   finally { appState.isStudentsSummaryLoading = false; }
+}
+
+export async function fetchSeatPurchases() {
+  if (appState.landingAuthRole !== "institution") return;
+  appState.isSeatPurchasesLoading = true;
+  try {
+    const res = await fetch("/api/seats/purchases", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.seatPurchases = data.purchases || [];
+    appState.seatMonth = data.month || { year: 0, month: 0, spots: 0, amount_cents: 0 };
+  } catch { /* payments tab shows the empty state */ }
+  finally { appState.isSeatPurchasesLoading = false; }
 }
 
 export function computeStreak(lastActiveDate: string): number {

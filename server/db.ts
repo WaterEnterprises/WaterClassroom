@@ -490,6 +490,17 @@ export async function initDB() {
     )
   `);
   await db.execute(`
+    CREATE TABLE IF NOT EXISTS seat_purchases (
+      id TEXT PRIMARY KEY,
+      institution_id TEXT NOT NULL,
+      spots INTEGER NOT NULL,
+      billing_cycle TEXT DEFAULT 'monthly',
+      amount_cents INTEGER DEFAULT 0,
+      stripe_session_id TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS badges (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

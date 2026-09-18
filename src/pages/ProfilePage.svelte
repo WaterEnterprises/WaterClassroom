@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { appState, setIsLoggedIn, handleUpdateProfile } from '../lib/store.svelte';
-  import { User, Mail, Globe, GraduationCap, CreditCard, Shield, LogOut, ChevronRight, Check, Calendar, BookOpen, Building, Clock, Key, Trash2, Bell, Camera, Save } from 'lucide-svelte';
+  import { appState, setIsLoggedIn, handleUpdateProfile, fetchSeatPurchases } from '../lib/store.svelte';
+  import { User, Users, Mail, Globe, GraduationCap, CreditCard, Shield, LogOut, ChevronRight, Check, Calendar, BookOpen, Building, Clock, Key, Trash2, Bell, Camera, Save } from 'lucide-svelte';
 
   const isInstitution = $derived(appState.landingAuthRole === 'institution');
 
@@ -49,6 +49,20 @@
   });
 
   let activeSection = $state<'overview' | 'payments' | 'settings'>('overview');
+  let seatsLoaded = $state(false);
+
+  const monthName = $derived(
+    appState.seatMonth.month >= 1 && appState.seatMonth.month <= 12
+      ? new Date(appState.seatMonth.year, appState.seatMonth.month - 1, 1).toLocaleString('default', { month: 'long' })
+      : 'This month'
+  );
+
+  $effect(() => {
+    if (isInstitution && activeSection === 'payments' && !seatsLoaded && !appState.isSeatPurchasesLoading) {
+      seatsLoaded = true;
+      fetchSeatPurchases();
+    }
+  });
   let showPasswordChange = $state(false);
   let currentPassword = $state('');
   let newPassword = $state('');
@@ -179,6 +193,45 @@
 
   <!-- Payments Section -->
   {#if activeSection === 'payments'}
+    {#if isInstitution}
+      <!-- Spots paid for this month -->
+      <div class="frosted-glass rounded-2xl p-6 border border-emerald-900/30 space-y-4 mb-6">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2"><Users class="w-4 h-4 text-emerald-400" /> Spots Paid — {monthName}</h3>
+        {#if appState.isSeatPurchasesLoading && appState.seatPurchases.length === 0}
+          <p class="text-xs text-slate-400">Loading spot purchases…</p>
+        {:else}
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <div class="bg-slate-950/50 p-4 rounded-xl text-center space-y-1">
+              <strong class="text-2xl font-extrabold text-emerald-400 font-mono">{appState.seatMonth.spots}</strong>
+              <span class="text-[9px] text-slate-400 font-mono uppercase block">Spots paid</span>
+            </div>
+            <div class="bg-slate-950/50 p-4 rounded-xl text-center space-y-1">
+              <strong class="text-2xl font-extrabold text-white font-mono">${(appState.seatMonth.amount_cents / 100).toLocaleString()}</strong>
+              <span class="text-[9px] text-slate-400 font-mono uppercase block">Charged</span>
+            </div>
+            <div class="bg-slate-950/50 p-4 rounded-xl text-center space-y-1">
+              <strong class="text-2xl font-extrabold text-blue-400 font-mono">{appState.institutionSeats.paid}</strong>
+              <span class="text-[9px] text-slate-400 font-mono uppercase block">Total spots</span>
+            </div>
+          </div>
+          {#if appState.seatPurchases.length > 0}
+            <div class="space-y-2">
+              {#each appState.seatPurchases.slice(0, 10) as p (p.id)}
+                <div class="p-3 bg-slate-950/50 rounded-xl flex justify-between items-center">
+                  <div>
+                    <p class="text-xs text-white font-bold">{p.spots} spot{p.spots === 1 ? '' : 's'} <span class="text-slate-500 font-normal">• {p.billing_cycle === 'yearly' ? 'Yearly' : 'Monthly'}</span></p>
+                    <p class="text-[9px] text-slate-500 font-mono">{String(p.created_at || '').slice(0, 10)}</p>
+                  </div>
+                  <p class="text-xs text-white font-bold font-mono">${(Number(p.amount_cents || 0) / 100).toLocaleString()}</p>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-[11px] text-slate-600">No spot purchases yet — buy spots in School → Settings.</p>
+          {/if}
+        {/if}
+      </div>
+    {/if}
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Current Plan -->
       <div class="frosted-glass rounded-2xl p-6 border border-blue-900/30 space-y-4">
