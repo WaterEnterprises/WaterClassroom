@@ -1,5 +1,5 @@
 /* bun-svelte:bun-svelte:ForumsPage.svelte-15f1j696p2sah-style.css */
-@keyframes svelte-2c54ppdocxlzn-useful-pop {
+@keyframes svelte-fsk6c5e0fgrb-useful-pop {
   0% {
     transform: scale(1);
   }
@@ -17,56 +17,56 @@
   }
 }
 
-.useful-popping.svelte-2c54ppdocxlzn {
-  animation: svelte-2c54ppdocxlzn-useful-pop .32s ease-in-out;
+.useful-popping.svelte-fsk6c5e0fgrb {
+  animation: svelte-fsk6c5e0fgrb-useful-pop .32s ease-in-out;
   color: #60a5fa;
 }
 
 /* bun-svelte:bun-svelte:RichTextEditor.svelte-e246pzckyv5z-style.css */
-.rich-editor-content.svelte-1efw7lcqfd0hp:empty:before {
+.rich-editor-content.svelte-199vfj0ga1fdx:empty:before {
   content: attr(data-placeholder);
   color: #64748b;
   pointer-events: none;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp h2 {
+.rich-editor-content.svelte-199vfj0ga1fdx h2 {
   color: #fff;
   margin: .8em 0 .4em;
   font-size: 1.25rem;
   font-weight: 800;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp h3 {
+.rich-editor-content.svelte-199vfj0ga1fdx h3 {
   color: #fff;
   margin: .7em 0 .3em;
   font-size: 1.05rem;
   font-weight: 700;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp p {
+.rich-editor-content.svelte-199vfj0ga1fdx p {
   margin: .5em 0;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp ul {
+.rich-editor-content.svelte-199vfj0ga1fdx ul {
   list-style: disc;
   margin: .5em 0;
   padding-left: 1.4em;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp ol {
+.rich-editor-content.svelte-199vfj0ga1fdx ol {
   list-style: decimal;
   margin: .5em 0;
   padding-left: 1.4em;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp blockquote {
+.rich-editor-content.svelte-199vfj0ga1fdx blockquote {
   color: #94a3b8;
   border-left: 3px solid #3b82f6;
   margin: .6em 0;
   padding-left: .8em;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp pre {
+.rich-editor-content.svelte-199vfj0ga1fdx pre {
   font-family: var(--font-mono);
   overflow-x: auto;
   background: #0f172a;
@@ -76,7 +76,7 @@
   font-size: .8rem;
 }
 
-.rich-editor-content.svelte-1efw7lcqfd0hp a {
+.rich-editor-content.svelte-199vfj0ga1fdx a {
   color: #60a5fa;
   text-decoration: underline;
 }

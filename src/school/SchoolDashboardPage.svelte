@@ -205,6 +205,10 @@
 
   const totalSeats = $derived(appState.institutionSeats.paid || 50);
   const usedSeats = $derived(appState.institutionSeats.used || 0);
+  // Seat gate: adding students requires a paid spot. The server enforces the
+  // same check — this only controls the roster UI up front.
+  const spotsFull = $derived(usedSeats >= totalSeats);
+  const spotsLeft = $derived(Math.max(totalSeats - usedSeats, 0));
   const avgProgress = $derived(Math.round(effectiveStudents.reduce((sum: number, s: any) => sum + Math.round((s.points || 0) / 10), 0) / Math.max(effectiveStudents.length, 1)));
   const isInstitution = $derived(appState.landingAuthRole === "institution");
 
@@ -246,10 +250,10 @@
   <!-- Sections stay mounted (hidden, not destroyed) so form inputs, codes, and pickers survive tab switches. -->
   <div class="space-y-6" class:hidden={activeSection !== "overview"}>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="frosted-glass rounded-2xl p-5 border border-blue-900/30 space-y-2">
+        <div class="frosted-glass rounded-2xl p-5 border {spotsFull ? 'border-red-700/50' : 'border-blue-900/30'} space-y-2">
           <div class="flex items-center gap-2 text-indigo-400"><Users class="w-4 h-4" /><span class="text-[10px] uppercase font-mono font-bold text-slate-400">Active Students</span></div>
           <strong class="text-3xl font-extrabold text-white">{usedSeats}</strong>
-          <span class="text-[10px] text-slate-500 block">/ {totalSeats} licensed seats</span>
+          <span class="text-[10px] block {spotsFull ? 'text-red-400 font-bold' : 'text-slate-500'}">/ {totalSeats} paid spots{spotsFull ? ' — full' : ''}</span>
           <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden mt-1"><div class="bg-indigo-500 h-full rounded-full {widthClass((usedSeats / totalSeats) * 100)}"></div></div>
         </div>
         <div class="frosted-glass rounded-2xl p-5 border border-blue-900/30 space-y-2">
@@ -271,14 +275,25 @@
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 class="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2"><Users class="w-4 h-4 text-indigo-400" /> Student Roster</h3>
-          <p class="text-[10px] text-slate-400">{rosterStudents.length} enrolled · {pendingInvites.length} invite{pendingInvites.length === 1 ? '' : 's'} pending</p>
+          <p class="text-[10px] text-slate-400">{rosterStudents.length} enrolled · {pendingInvites.length} invite{pendingInvites.length === 1 ? '' : 's'} pending · <span class="{spotsFull ? 'text-red-400 font-bold' : 'text-emerald-300 font-bold'}">{spotsLeft}/{totalSeats} spots left</span></p>
         </div>
         <div class="flex gap-2">
-          <button onclick={() => { showAddStudent = !showAddStudent; inviteError = ""; }} class="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-lg uppercase tracking-wider transition">
+          <button onclick={() => { showAddStudent = !showAddStudent; inviteError = ""; }} disabled={spotsFull}
+            title={spotsFull ? `No spots left (${usedSeats}/${totalSeats} used) — buy more in Settings` : 'Add a student'}
+            class="flex items-center gap-1.5 px-3.5 py-2 text-white text-[10px] font-bold rounded-lg uppercase tracking-wider transition {spotsFull ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500'}">
             <Plus class="w-3.5 h-3.5" /> Add Student
           </button>
         </div>
       </div>
+      {#if spotsFull}
+        <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-red-950/40 border border-red-700/50">
+          <div>
+            <p class="text-[10px] uppercase font-mono tracking-widest text-red-400 font-bold">No student spots left ({usedSeats}/{totalSeats} used)</p>
+            <p class="text-[10px] text-slate-400">Your institution has used all paid spots. Buy more to keep adding students.</p>
+          </div>
+          <button onclick={() => { activeSection = 'settings'; }} class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold rounded-lg uppercase transition">Buy More Spots</button>
+        </div>
+      {/if}
       {#if showAddStudent}
         <div class="bg-slate-950/60 border border-indigo-900/30 rounded-xl p-4 space-y-3 animate-fade-in">
           <p class="text-[10px] text-slate-400">Adding a student generates their <strong class="text-emerald-300">unique signup code + invite link</strong> — email it to them with the ✉️ button, or share the link directly. They join instantly, already linked and activated.</p>
@@ -293,7 +308,7 @@
             </select>
           </div>
           {#if inviteError}<p class="text-[10px] text-red-400 font-bold">{inviteError}</p>{/if}
-          <button onclick={inviteStudent} class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-[10px] font-bold rounded-lg uppercase transition" disabled={isInviting || !newStudentName.trim() || !newStudentEmail.trim()}>{isInviting ? 'Generating code…' : 'Generate Signup Code'}</button>
+          <button onclick={inviteStudent} class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-[10px] font-bold rounded-lg uppercase transition" disabled={isInviting || spotsFull || !newStudentName.trim() || !newStudentEmail.trim()}>{isInviting ? 'Generating code…' : spotsFull ? 'No Spots Left' : 'Generate Signup Code'}</button>
         </div>
       {/if}
       {#if justCreatedCode}
