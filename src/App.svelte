@@ -14,8 +14,9 @@
   import ProfilePage from './pages/ProfilePage.svelte';
   import ExamsPage from './pages/ExamsPage.svelte';
   import StudentsPage from './pages/StudentsPage.svelte';
+  import MessagesPage from './pages/MessagesPage.svelte';
   import StudioPage from './pages/StudioPage.svelte';
-  import { BookOpen, ClipboardList, MessageSquare, LayoutDashboard, Building, User, Shield, GraduationCap, Users } from 'lucide-svelte';
+  import { BookOpen, ClipboardList, MessageSquare, LayoutDashboard, Building, User, Shield, GraduationCap, Users, Mail } from 'lucide-svelte';
   import { fade, scale } from 'svelte/transition';
 
   const isInstitution = $derived(appState.landingAuthRole === 'institution');
@@ -29,6 +30,7 @@
         { key: 'tasks', label: 'Tasks', icon: ClipboardList },
         { key: 'exams', label: 'Students', icon: Users },
         { key: 'collaborate', label: 'Forums', icon: MessageSquare },
+        { key: 'messages', label: 'Messages', icon: Mail },
       ]
     : [
         { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -37,6 +39,7 @@
         { key: 'tasks', label: 'Tasks', icon: ClipboardList },
         { key: 'exams', label: 'Exams', icon: Shield },
         { key: 'collaborate', label: 'Forums', icon: MessageSquare },
+        { key: 'messages', label: 'Messages', icon: Mail },
       ]);
 </script>
 
@@ -77,6 +80,9 @@
         <div class:hidden={appState.activeTab !== 'collaborate'}>
           <ForumsPage />
         </div>
+        <div class:hidden={appState.activeTab !== 'messages'}>
+          <MessagesPage />
+        </div>
         {#if isInstitution}
           <div class:hidden={appState.activeTab !== 'studio'}>
             <StudioPage />
@@ -97,9 +103,12 @@
           {@const isActive = appState.activeTab === tab.key}
           <button
             onclick={() => navigateTo(tab.key)}
-            class="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg transition-all duration-200 {isActive ? 'text-blue-400 scale-105' : 'text-slate-500 hover:text-slate-300'}"
+            class="relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg transition-all duration-200 {isActive ? 'text-blue-400 scale-105' : 'text-slate-500 hover:text-slate-300'}"
           >
             <Icon class="w-5 h-5" />
+            {#if tab.key === 'messages' && appState.dmUnreadTotal > 0}
+              <span class="absolute top-0.5 right-1 min-w-4 h-4 px-1 rounded-full bg-blue-600 text-white text-[8px] font-extrabold flex items-center justify-center">{appState.dmUnreadTotal > 99 ? '99+' : appState.dmUnreadTotal}</span>
+            {/if}
             <span class="text-[9px] font-bold uppercase tracking-wider">{tab.label}</span>
             {#if isActive}
               <span transition:scale={{ duration: 120 }} class="w-4 h-0.5 bg-blue-500 rounded-full mt-0.5"></span>

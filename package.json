@@ -8,9 +8,18 @@
     "build": "bun run build.ts",
     "start": "bun run server.ts",
     "lint": "bunx svelte-check --tsconfig ./tsconfig.json",
-    "grant-system": "bun run scripts/grant-system.ts"
+    "grant-system": "bun run scripts/grant-system.ts",
+    "cap:sync": "bun run build && bunx cap sync",
+    "cap:android": "bunx cap open android",
+    "cap:ios": "bunx cap open ios",
+    "cap:assets": "bunx capacitor-assets generate --android --ios"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/status-bar": "^8.0.3",
     "@google/genai": "^2.4.0",
     "@hono/node-server": "^1.13.7",
     "@libsql/client": "^0.17.3",
@@ -18,10 +27,12 @@
     "hono": "^4.6.14",
     "lucide-svelte": "^1.0.1",
     "phaser": "^4.2.0",
+    "sharp": "^0.35.4",
     "stripe": "^22.2.0",
     "svelte": "^5.56.3"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@tailwindcss/cli": "^4.3.1",
     "@types/bcryptjs": "^3.0.0",
     "@types/bun": "latest",
@@ -32,6 +43,7 @@
   "trustedDependencies": [
     "@google/genai",
     "@parcel/watcher",
-    "protobufjs"
+    "protobufjs",
+    "sharp"
   ]
 }

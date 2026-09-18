@@ -501,6 +501,16 @@ export async function initDB() {
     )
   `);
   await db.execute(`
+    CREATE TABLE IF NOT EXISTS direct_messages (
+      id TEXT PRIMARY KEY,
+      sender_id TEXT NOT NULL,
+      recipient_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      is_read INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS badges (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

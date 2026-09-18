@@ -1,7 +1,7 @@
 <script lang="ts">
 import { appState, startVerifiedProctorExam, stopVerifiedProctorExam, handleQuizSubmit, setSelectedCurriculum, setSelectedLesson, setActiveQuiz, setQuizAnswers, setShowQuizResult, setActiveGame, setIsCurriculumLoading, setCurriculumError, loadCurriculumForStudent, loadLessonComponent, fetchJoinedClasses, fetchAvailableClasses, fetchMyInstitution, fetchBrowseTree, fetchTutorClasses, openStudioLesson, closeStudioLesson, toggleFavoriteTrack } from '../lib/store.svelte';
 import { QUIZZES } from '../lib/lessonsData';
-import { CheckCircle, ChevronRight, Video, BookOpen, Shield, Check, Send, RefreshCw, X, GraduationCap, Play, Star, Layers } from 'lucide-svelte';
+import { CheckCircle, ChevronRight, ChevronLeft, ArrowLeft, Video, BookOpen, Shield, Check, Send, RefreshCw, X, GraduationCap, Play, Star, Layers } from 'lucide-svelte';
 import TrinityGame from '../components/games/TrinityGame.svelte';
 import RoboticsGame from '../components/games/RoboticsGame.svelte';
 import IncentiveGame from '../components/games/IncentiveGame.svelte';
@@ -56,11 +56,112 @@ $effect(() => {
       ? appState.availableTracks.filter(t => (t.institution_id || '') === appState.myInstitution!.id)
       : []
   );
-  const waterTracks = $derived(
-    appState.myInstitution
-      ? appState.availableTracks.filter(t => (t.institution_id || '') !== appState.myInstitution!.id)
-      : appState.availableTracks
+
+  const isInstitution = $derived(appState.landingAuthRole === 'institution');
+
+  // Student's enrolled track tree (the overall track they're following).
+  const enrolledTree = $derived(
+    (appState.browseTree as any[]).find((t: any) => t.id === appState.selectedOnboardingTrackId) || null
   );
+
+  // Flatten the enrolled track in order: grades → courses → lessons.
+  const enrolledLessonsFlat = $derived.by(() => {
+    if (!enrolledTree) return [];
+    const flat: Array<any> = [];
+    const push = (cls: any, gradeId: string, gradeLabel: string, courseName: string) =>
+      flat.push({ ...cls, _gradeId: gradeId, _gradeLabel: gradeLabel, _courseName: courseName });
+    for (const g of enrolledTree.grades || []) {
+      for (const co of g.courses || []) for (const cls of co.lessons || []) push(cls, g.id, g.label, co.name);
+      for (const cls of g.directLessons || []) push(cls, g.id, g.label, '');
+    }
+    for (const co of enrolledTree.looseCourses || []) for (const cls of co.lessons || []) push(cls, '', '', co.name);
+    for (const cls of enrolledTree.ungroupedLessons || []) push(cls, '', '', '');
+    return flat;
+  });
+
+  // The student's enrolled grade key (id or level string, as saved on the account).
+  const enrolledGradeKey = $derived(String(appState.studentGradeLevelId || ''));
+
+  // Lessons in the enrolled grade only (empty when the grade has no match —
+  // callers fall back to the whole track so the screen never goes blank).
+  const enrolledGradeFlat = $derived(
+    enrolledGradeKey
+      ? enrolledLessonsFlat.filter((l: any) => l._gradeId === enrolledGradeKey || String(l.grade_level) === enrolledGradeKey)
+      : []
+  );
+
+  // The latest next lesson to complete — scoped to the enrolled grade first,
+  // falling back to the overall track order when the grade has no match.
+  const upNextLesson = $derived.by(() => {
+    const pool = enrolledGradeFlat.length > 0 ? enrolledGradeFlat : enrolledLessonsFlat;
+    return pool.find((l: any) => !appState.progress.completedLessons.includes(l.id)) || null;
+  });
+
+  // Courses & subjects — only the student's enrolled grade (whole track fallback).
+  const enrolledGradeViews = $derived.by(() => {
+    if (!enrolledTree) return [];
+    const grades = (enrolledTree.grades || []).filter((g: any) =>
+      enrolledGradeKey ? (g.id === enrolledGradeKey || String(g.grade_level) === enrolledGradeKey) : true
+    );
+    return grades.length > 0 || !enrolledGradeKey ? grades : (enrolledTree.grades || []);
+  });
+
+  // Courses & subjects on the enrolled track (enrolled grade only).
+  const enrolledCourses = $derived.by(() => {
+    if (!enrolledTree) return [];
+    const list: Array<any> = [];
+    for (const g of enrolledGradeViews) {
+      for (const co of g.courses || []) {
+        const lessons = co.lessons || [];
+        list.push({
+          id: co.id, name: co.name, gradeLabel: g.label,
+          lessonCount: lessons.length,
+          subjects: [...new Set(lessons.map((l: any) => l.subject || 'General'))],
+        });
+      }
+    }
+    for (const co of enrolledTree.looseCourses || []) {
+      const lessons = co.lessons || [];
+      list.push({
+        id: co.id, name: co.name, gradeLabel: '',
+        lessonCount: lessons.length,
+        subjects: [...new Set(lessons.map((l: any) => l.subject || 'General'))],
+      });
+    }
+    return list;
+  });
+  const enrolledSubjects = $derived.by(() => {
+    const source = enrolledGradeFlat.length > 0 ? enrolledGradeFlat : enrolledLessonsFlat;
+    const map = new Map<string, number>();
+    for (const l of source) map.set(l.subject || 'General', (map.get(l.subject || 'General') || 0) + 1);
+    return [...map.entries()].map(([subject, count]) => ({ subject, count }));
+  });
+
+  // Full-screen lesson reader: back to lectures, prev/next, quiz + complete.
+  let isLessonFullscreen = $state(false);
+
+  function openLesson(id: string) {
+    isLessonFullscreen = true;
+    openStudioLesson(id);
+  }
+
+  function closeFullscreen() {
+    isLessonFullscreen = false;
+    closeStudioLesson();
+  }
+
+  // Prev/next order: enrolled track order when the lesson is in it,
+  // otherwise the lesson's own track order.
+  const lessonNavList = $derived.by((): Array<any> => {
+    const activeId = appState.activeStudioLesson?.id;
+    if (!activeId) return [];
+    if (enrolledLessonsFlat.some((l: any) => l.id === activeId)) return enrolledLessonsFlat;
+    const tid = appState.activeStudioLesson?.track_id;
+    return tid ? classesForTrack(tid) : [];
+  });
+  const lessonNavIdx = $derived(lessonNavList.findIndex((l: any) => l.id === appState.activeStudioLesson?.id));
+  const prevLesson = $derived(lessonNavIdx > 0 ? lessonNavList[lessonNavIdx - 1] : null);
+  const nextLesson = $derived(lessonNavIdx >= 0 && lessonNavIdx < lessonNavList.length - 1 ? lessonNavList[lessonNavIdx + 1] : null);
 
   const formatExamTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -78,9 +179,60 @@ $effect(() => {
   const examTimerWidthClass = $derived(appState.examTimer / 600 >= 1 ? 'w-full' : appState.examTimer / 600 >= 0.75 ? 'w-3/4' : appState.examTimer / 600 >= 0.5 ? 'w-1/2' : appState.examTimer / 600 >= 0.25 ? 'w-1/4' : 'w-0');
 </script>
 
-<div class="animate-fade-in grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-  <!-- Left: track browser (school tracks, favorites, water tracks, enrolled, recents) -->
-  <div class="lg:col-span-1 space-y-6 min-w-0">
+<div class="animate-fade-in space-y-6">
+  <!-- Lesson browser (whole page): tracks, favorites, enrolled, recents -->
+  <div class="space-y-6 min-w-0">
+  {#if !isInstitution && (upNextLesson || enrolledCourses.length > 0 || enrolledSubjects.length > 0)}
+    <!-- Up next: latest next lesson on the overall track -->
+    {#if upNextLesson}
+      {@const openUpNext = appState.activeStudioLesson?.id === upNextLesson.id}
+      <div class="rounded-3xl p-5 sm:p-6 bg-gradient-to-br from-blue-700 via-blue-800 to-indigo-900 border border-blue-400/30 shadow-2xl space-y-3">
+        <span class="text-[9px] uppercase font-mono tracking-widest text-blue-200 font-bold flex items-center gap-1.5">
+          <Play class="w-3 h-3" /> Up Next — {enrolledTree?.name || 'Your track'}
+        </span>
+        <h3 class="text-lg font-extrabold text-white leading-snug">{upNextLesson.title}</h3>
+        <p class="text-[10px] text-blue-200">
+          {#if upNextLesson._gradeLabel}{upNextLesson._gradeLabel}{/if}{#if upNextLesson._courseName} • {upNextLesson._courseName}{/if}
+          • {upNextLesson.subject} • {upNextLesson.estimated_minutes} min
+        </p>
+        <div class="flex flex-wrap items-center gap-1.5">
+          {#if upNextLesson.has_quiz}<span class="text-[8px] font-bold uppercase px-1.5 py-px rounded bg-white/15 border border-white/25 text-white">Quiz</span>{/if}
+          {#if upNextLesson.game_path}<span class="text-[8px] font-bold uppercase px-1.5 py-px rounded bg-white/15 border border-white/25 text-white">Game</span>{/if}
+          <button onclick={() => openLesson(upNextLesson.id)}
+            class="ml-auto px-4 py-2 rounded-xl bg-white text-blue-950 text-[11px] font-extrabold uppercase tracking-wider transition hover:bg-blue-50 flex items-center gap-1.5">
+            {#if openUpNext}<span class="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span> Open{:else}<Play class="w-3 h-3" /> Continue{/if}
+          </button>
+        </div>
+      </div>
+    {/if}
+    <!-- Courses & subjects on enrolled tracks -->
+    {#if enrolledCourses.length > 0 || enrolledSubjects.length > 0}
+      <div class="space-y-3">
+        {#if enrolledSubjects.length > 0}
+          <div class="flex flex-wrap gap-1.5 px-1">
+            {#each enrolledSubjects as s (s.subject)}
+              <span class="px-2.5 py-1 rounded-full text-[9px] font-bold bg-blue-950/60 border border-blue-800/60 text-blue-300">{s.subject} • {s.count}</span>
+            {/each}
+          </div>
+        {/if}
+        {#if enrolledCourses.length > 0}
+          <div>
+            <span class="text-[10px] uppercase font-mono tracking-widest text-blue-400 font-bold px-1">Courses — {enrolledTree?.name || 'Enrolled track'}{enrolledGradeViews.length === 1 && enrolledGradeViews[0] ? ` • ${enrolledGradeViews[0].label}` : ''}</span>
+            <div class="space-y-1.5 mt-2">
+              {#each enrolledCourses as co (co.id)}
+                <div class="px-3.5 py-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
+                  <span class="text-xs font-bold text-slate-200 block">{co.name}</span>
+                  <span class="text-[9px] text-slate-500 block mt-0.5">
+                    {#if co.gradeLabel}{co.gradeLabel} • {/if}{co.lessonCount} lesson{co.lessonCount === 1 ? '' : 's'}{co.subjects.length ? ` • ${co.subjects.join(', ')}` : ''}
+                  </span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+  {/if}
   <!-- Tutor workspace: assigned classes + their students -->
   {#if appState.landingAuthRole === 'tutor'}
     <div class="space-y-3 mb-6">
@@ -101,7 +253,7 @@ $effect(() => {
                   <h4 class="font-bold text-white text-sm">{tc.title}</h4>
                   <p class="text-[10px] text-slate-400">{tc.subject} • Grade {tc.grade_level}{tc.institution_name ? ` • ${tc.institution_name}` : ''}</p>
                 </div>
-                <button onclick={() => openStudioLesson(tc.id)}
+                <button onclick={() => openLesson(tc.id)}
                   class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-bold transition flex items-center gap-1 shrink-0">
                   <Play class="w-2.5 h-2.5" /> Open
                 </button>
@@ -176,7 +328,7 @@ $effect(() => {
 
   {#snippet lessonRow(cls: any)}
     {@const clsOpen = appState.activeStudioLesson?.id === cls.id}
-    <button onclick={() => openStudioLesson(cls.id)}
+    <button onclick={() => openLesson(cls.id)}
       class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-950/70 border text-left transition {clsOpen ? 'border-indigo-500' : 'border-slate-800 hover:border-slate-600'}">
       <div class="min-w-0">
         <span class="text-[11px] font-bold text-slate-200 block truncate">{cls.title}</span>
@@ -280,25 +432,6 @@ $effect(() => {
     </div>
   {/if}
 
-  <!-- Water Classroom tracks (everyone else) -->
-  <div class="space-y-3 mb-6">
-    <div class="flex items-center justify-between px-1">
-      <span class="text-[10px] uppercase font-mono tracking-widest text-cyan-400 font-bold flex items-center gap-1.5">
-        <Layers class="w-3.5 h-3.5" /> Water Classroom Tracks
-      </span>
-      {#if appState.isClassesLoading}<RefreshCw class="w-3.5 h-3.5 text-cyan-400 animate-spin" />{/if}
-    </div>
-    {#if waterTracks.length === 0 && !appState.isClassesLoading}
-      <p class="text-[11px] text-slate-600 px-1">No published tracks yet — check back soon.</p>
-    {:else}
-      <div class="space-y-2 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
-        {#each waterTracks as track (track.id)}
-          {@render trackBrowserCard(track, 'cyan')}
-        {/each}
-      </div>
-    {/if}
-  </div>
-
   <!-- Left: Recents + enrolled classes -->
   <div class="space-y-6">
     <!-- Enrolled institution classes (runtime JSON lessons — no rebuild) -->
@@ -310,7 +443,7 @@ $effect(() => {
         <div class="space-y-2">
           {#each appState.joinedClasses as jc (jc.id)}
             {@const isOpen = appState.activeStudioLesson?.id === jc.id}
-            <button onclick={() => openStudioLesson(jc.id)}
+            <button onclick={() => openLesson(jc.id)}
               class="w-full text-left p-3 rounded-xl transition border text-xs flex items-start justify-between gap-2 {isOpen ? 'bg-indigo-600/15 border-indigo-500' : 'bg-slate-950/60 hover:bg-[#09152b]/55 border-indigo-900/50'}">
               <div class="space-y-1 flex-1">
                 <h4 class="font-bold text-white">{jc.title}</h4>
@@ -354,20 +487,8 @@ $effect(() => {
 
   </div>
 
-  <!-- Right: class viewer (lesson content / quiz / games) -->
-  <div class="lg:col-span-2 space-y-6 min-w-0 lg:sticky lg:top-20">
-    {#if !appState.selectedLesson && !appState.activeQuiz && !appState.activeGame}
-      <div class="frosted-glass rounded-3xl p-12 text-center space-y-4">
-        <div class="w-16 h-16 rounded-full bg-blue-950 border border-blue-500/20 flex items-center justify-center text-blue-400 mx-auto animate-bounce">
-          <BookOpen class="w-8 h-8" />
-        </div>
-        <div class="space-y-1">
-          <h3 class="font-extrabold text-xl text-white uppercase tracking-wider">No Lecture Selected</h3>
-          <p class="text-slate-400 text-xs max-w-sm mx-auto">Choose a curriculum track and lesson to get started.</p>
-        </div>
-      </div>
-    {/if}
-
+  <!-- Active learning panes (quiz / games / proctor exams) -->
+  <div class="space-y-6 min-w-0">
     {#if appState.selectedLesson && !appState.activeQuiz && !appState.activeGame}
       {@const lesson = appState.selectedLesson}
       <div class="frosted-glass-dark rounded-3xl p-6 sm:p-8 border border-blue-950 overflow-hidden relative space-y-6">
@@ -409,24 +530,49 @@ $effect(() => {
       <LessonComponentRenderer />
     {/if}
 
-    <!-- Runtime studio lesson (JSON — plays immediately, no rebuild) -->
-    {#if (appState.activeStudioLesson || appState.isStudioLessonLoading || appState.studioLessonError) && !appState.activeQuiz && !appState.activeGame}
-      <div transition:fade={{ duration: 200 }} class="frosted-glass-dark rounded-3xl p-6 sm:p-8 border border-indigo-950 overflow-hidden relative space-y-6">
-        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-indigo-600 via-purple-400 to-blue-600"></div>
-        {#if appState.isStudioLessonLoading}
-          <div class="text-center space-y-3 py-6">
-            <RefreshCw class="w-8 h-8 text-indigo-400 animate-spin mx-auto" />
-            <p class="text-xs text-slate-400">Loading lesson…</p>
+    <!-- Full-screen lesson reader: whole-page content with back / prev / next -->
+    {#if isLessonFullscreen && (appState.activeStudioLesson || appState.isStudioLessonLoading || appState.studioLessonError)}
+      <div transition:fade={{ duration: 200 }} class="fixed inset-0 z-50 bg-[#030712] overflow-y-auto">
+        <div class="sticky top-0 z-10 bg-[#060b18]/95 backdrop-blur border-b border-blue-950/60">
+          <div class="max-w-4xl mx-auto px-4 py-3 flex items-center gap-2">
+            <button onclick={closeFullscreen}
+              class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold transition shrink-0">
+              <ArrowLeft class="w-3.5 h-3.5" /> Lectures
+            </button>
+            <div class="flex-1 min-w-0 text-center">
+              <p class="text-sm font-extrabold text-white truncate">{appState.activeStudioLesson?.title || 'Loading lesson…'}</p>
+              {#if lessonNavList.length > 1}
+                <p class="text-[9px] font-mono text-slate-500">Lesson {lessonNavIdx + 1} of {lessonNavList.length}</p>
+              {/if}
+            </div>
+            <button onclick={() => prevLesson && openLesson(prevLesson.id)} disabled={!prevLesson}
+              class="flex items-center gap-1 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 text-[11px] font-bold transition shrink-0">
+              <ChevronLeft class="w-3.5 h-3.5" /> Prev
+            </button>
+            <button onclick={() => nextLesson && openLesson(nextLesson.id)} disabled={!nextLesson}
+              class="flex items-center gap-1 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-[11px] font-bold transition shrink-0">
+              Next <ChevronRight class="w-3.5 h-3.5" />
+            </button>
           </div>
-        {:else if appState.studioLessonError}
-          <div class="text-center space-y-3 py-6">
-            <p class="text-sm font-bold text-red-300">Could not open lesson</p>
-            <p class="text-xs text-slate-400">{appState.studioLessonError}</p>
-            <button onclick={closeStudioLesson} class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">Close</button>
-          </div>
-        {:else if appState.activeStudioLesson}
-          <LessonPlayer lesson={appState.activeStudioLesson} onClose={closeStudioLesson} />
-        {/if}
+        </div>
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          {#if appState.isStudioLessonLoading}
+            <div class="text-center space-y-3 py-16">
+              <RefreshCw class="w-10 h-10 text-indigo-400 animate-spin mx-auto" />
+              <p class="text-xs text-slate-400">Loading lesson…</p>
+            </div>
+          {:else if appState.studioLessonError}
+            <div class="text-center space-y-3 py-16">
+              <p class="text-sm font-bold text-red-300">Could not open lesson</p>
+              <p class="text-xs text-slate-400">{appState.studioLessonError}</p>
+              <button onclick={closeFullscreen} class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition">Back to lectures</button>
+            </div>
+          {:else if appState.activeStudioLesson}
+            {#key appState.activeStudioLesson.id}
+              <LessonPlayer lesson={appState.activeStudioLesson} onClose={closeFullscreen} />
+            {/key}
+          {/if}
+        </div>
       </div>
     {/if}
 

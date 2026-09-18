@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { appState, setIsLoggedIn, handleUpdateProfile, fetchSeatPurchases } from '../lib/store.svelte';
-  import { User, Users, Mail, Globe, GraduationCap, CreditCard, Shield, LogOut, ChevronRight, Check, Calendar, BookOpen, Building, Clock, Key, Trash2, Bell, Camera, Save } from 'lucide-svelte';
+  import { appState, setIsLoggedIn, handleUpdateProfile, fetchSeatPurchases, fetchAvailableClasses, fetchBrowseTree, refreshAccountFromServer, selectSystemTrack, setOnboardingCurriculum } from '../lib/store.svelte';
+  import { COUNTRY_CATALOG } from '../lib/countryCatalog';
+  import { User, Users, Mail, Globe, CreditCard, Shield, LogOut, ChevronRight, Check, Calendar, BookOpen, Building, Clock, Key, Trash2, Bell, Camera, Save, X } from 'lucide-svelte';
 
   const isInstitution = $derived(appState.landingAuthRole === 'institution');
 
@@ -50,6 +51,104 @@
 
   let activeSection = $state<'overview' | 'payments' | 'settings'>('overview');
   let seatsLoaded = $state(false);
+  // Enrollment editing (student track + grade).
+  const isStudentRole = $derived(
+    appState.landingAuthRole === 'water-student' ||
+    appState.landingAuthRole === 'independent-student' ||
+    appState.landingAuthRole === 'school-student'
+  );
+  let accountLoaded = $state(false);
+
+  // Enrollment is database-driven: refresh the saved account + enrolled
+  // curriculum track when opening Profile.
+  $effect(() => {
+    if (isStudentRole && !accountLoaded && appState.isLoggedIn) {
+      accountLoaded = true;
+      refreshAccountFromServer();
+      if (appState.availableTracks.length === 0) fetchAvailableClasses();
+      if (appState.browseTree.length === 0) fetchBrowseTree();
+    }
+  });
+
+  // Curriculum track picker (Water Classroom database tracks).
+  let showTrackPicker = $state(false);
+  let pickerCountry = $state('ALL');
+  let enrollingTrackId = $state('');
+  let trackMsg = $state('');
+
+  const countryName = (code?: string) => {
+    if (!code || code === 'GLOBAL') return 'Global';
+    return COUNTRY_CATALOG.find(c => c.code === code)?.name || code;
+  };
+
+  // Countries that actually have tracks: Global + each present country.
+  const pickerCountries = $derived.by(() => {
+    const codes = new Set<string>();
+    for (const t of appState.availableTracks as any[]) codes.add(String(t.country_code || 'GLOBAL').toUpperCase());
+    const list = [...codes].sort();
+    // Global first, then alphabetical.
+    list.sort((a, b) => (a === 'GLOBAL' ? -1 : b === 'GLOBAL' ? 1 : countryName(a).localeCompare(countryName(b))));
+    return list;
+  });
+
+  const pickerTracks = $derived(
+    (appState.availableTracks as any[]).filter((t: any) =>
+      pickerCountry === 'ALL' || String(t.country_code || 'GLOBAL').toUpperCase() === pickerCountry
+    )
+  );
+
+  function trackStats(id: string): { grades: number; courses: number; lessons: number } {
+    const tree = (appState.browseTree as any[]).find((t: any) => t.id === id);
+    if (!tree) return { grades: 0, courses: 0, lessons: 0 };
+    const grades = (tree.grades || []).length;
+    let courses = (tree.looseCourses || []).length;
+    let lessons = (tree.ungroupedLessons || []).length;
+    for (const g of tree.grades || []) {
+      courses += (g.courses || []).length;
+      lessons += (g.directLessons || []).length;
+      for (const co of g.courses || []) lessons += (co.lessons || []).length;
+    }
+    for (const co of tree.looseCourses || []) lessons += (co.lessons || []).length;
+    return { grades, courses, lessons };
+  }
+
+  function openTrackPicker() {
+    trackMsg = '';
+    pickerCountry = 'ALL';
+    showTrackPicker = true;
+    if (appState.availableTracks.length === 0) fetchAvailableClasses();
+    if (appState.browseTree.length === 0) fetchBrowseTree();
+  }
+
+  async function enrollInTrack(id: string, name: string, gradeLevel?: string) {
+    if (enrollingTrackId) return;
+    enrollingTrackId = id;
+    trackMsg = '';
+    try {
+      // selectSystemTrack persists adminTrackId + name + grade on the database.
+      const ok = await selectSystemTrack(id, name, gradeLevel);
+      if (!ok) throw new Error('Could not enroll in this track.');
+      setOnboardingCurriculum(name);
+      trackMsg = gradeLevel
+        ? `Enrolled in “${name}” — ${gradeLabelOf(id, gradeLevel)} ✓`
+        : `Enrolled in “${name}” ✓ — Academy now follows this track.`;
+      showTrackPicker = false;
+    } catch (err: any) {
+      trackMsg = err.message || 'Could not enroll in this track.';
+    } finally {
+      enrollingTrackId = '';
+    }
+  }
+
+  function trackGrades(id: string): Array<{ id: string; grade_level: string; label: string }> {
+    const tree = (appState.browseTree as any[]).find((t: any) => t.id === id);
+    return (tree?.grades || []).map((g: any) => ({ id: g.id, grade_level: String(g.grade_level), label: g.label || `Grade ${g.grade_level}` }));
+  }
+
+  function gradeLabelOf(trackId: string, gradeLevel: string): string {
+    const g = trackGrades(trackId).find((gg) => gg.grade_level === String(gradeLevel) || gg.id === gradeLevel);
+    return g ? g.label : `Grade ${gradeLevel}`;
+  }
 
   const monthName = $derived(
     appState.seatMonth.month >= 1 && appState.seatMonth.month <= 12
@@ -254,7 +353,7 @@
             <span class="text-xs font-bold {appState.isUserActivated ? 'text-emerald-400' : 'text-amber-400'}">{appState.isUserActivated ? 'Active' : 'Pending Activation'}</span>
           </div>
         </div>
-        <button class="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs uppercase tracking-wider transition">Manage Subscription</button>
+        <button class="w-full py-2.5 rounded-xl bg-slate-800 text-slate-500 font-bold text-xs uppercase tracking-wider cursor-not-allowed" title="Contact support to change your plan">Manage Subscription</button>
       </div>
 
       <!-- Payment History -->
@@ -339,22 +438,20 @@
               <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">Display Name</label>
               <input type="text" bind:value={appState.studentName} class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500" />
             </div>
-            <div class="space-y-1">
-              <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">Grade Level</label>
-              <select bind:value={appState.studentGradeLevelId} class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500">
-                <option value="">Select Grade</option>
-                {#each ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', 'UG'] as g}
-                  <option value={g}>{g === 'UG' ? 'Undergraduate' : `Grade ${g}`}</option>
-                {/each}
-              </select>
-            </div>
-            <div class="space-y-1">
-              <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">Country</label>
-              <input type="text" bind:value={appState.studentCountry} class="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500" />
-            </div>
-            <button onclick={() => handleUpdateProfile({ name: appState.studentName, gradeLevel: appState.studentGradeLevelId, country: appState.studentCountry })} class="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-2">
+            <button onclick={() => handleUpdateProfile({ name: appState.studentName })} class="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-2">
               <Save class="w-3.5 h-3.5" /> Save Changes
             </button>
+            {#if isStudentRole}
+              <div class="space-y-1 pt-2 border-t border-slate-800">
+                <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">Curriculum Track (database)</label>
+                <p class="text-[11px] text-slate-300">{appState.onboardingCurriculum || 'General'}</p>
+                <button onclick={openTrackPicker}
+                  class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider transition flex items-center justify-center gap-2">
+                  <BookOpen class="w-3.5 h-3.5" /> Track Picker
+                </button>
+                {#if trackMsg && !showTrackPicker}<p class="text-[10px] font-bold text-emerald-400">{trackMsg}</p>{/if}
+              </div>
+            {/if}
           </div>
         </div>
       </div>
@@ -379,6 +476,78 @@
           <h3 class="text-sm font-bold text-rose-400 uppercase tracking-wide flex items-center gap-2"><Trash2 class="w-4 h-4" /> Danger Zone</h3>
           <p class="text-[10px] text-slate-400">Permanently delete your account and all associated data. This action cannot be undone.</p>
           <button class="px-4 py-2 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 text-[10px] font-bold rounded-lg uppercase transition border border-rose-500/20">Delete Account</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Track picker modal (Water Classroom database tracks) -->
+  {#if showTrackPicker}
+    <div class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div class="frosted-glass-dark p-5 sm:p-8 rounded-3xl max-w-2xl w-full border border-indigo-500/20 space-y-5 my-4">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h3 class="text-xl font-extrabold text-white">Choose Your Track</h3>
+            <p class="text-[11px] text-slate-400">Live tracks from the Water Classroom database — with grades, courses & classes.</p>
+          </div>
+          <button onclick={() => { showTrackPicker = false; }} class="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800 transition" title="Close"><X class="w-4 h-4" /></button>
+        </div>
+        <div class="space-y-1">
+          <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">Country</label>
+          <div class="flex flex-wrap gap-1.5">
+            <button onclick={() => pickerCountry = 'ALL'}
+              class="px-3 py-1.5 text-[10px] font-bold rounded-lg border transition {pickerCountry === 'ALL' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 border-slate-700 text-slate-400'}">
+              All Countries
+            </button>
+            {#each pickerCountries as code (code)}
+              <button onclick={() => pickerCountry = code}
+                class="px-3 py-1.5 text-[10px] font-bold rounded-lg border transition {pickerCountry === code ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900 border-slate-700 text-slate-400'}">
+                {code === 'GLOBAL' ? '🌍 Global' : countryName(code)}
+              </button>
+            {/each}
+          </div>
+        </div>
+        {#if trackMsg}<p class="text-[10px] font-bold text-red-400">{trackMsg}</p>{/if}
+        <div class="space-y-2 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+          {#each pickerTracks as t (t.id)}
+            {@const stats = trackStats(t.id)}
+            {@const enrolled = appState.selectedOnboardingTrackId === t.id}
+            {@const tGrades = trackGrades(t.id)}
+            <div class="rounded-2xl border transition {enrolled ? 'border-emerald-500 bg-emerald-950/20' : 'border-slate-800 bg-slate-950/50'}">
+              <div class="flex items-center gap-2 p-3.5">
+                <div class="flex-1 min-w-0">
+                  <span class="font-bold text-white text-xs block truncate">{t.name}</span>
+                  <span class="text-[9px] text-slate-500 block">
+                    <span class="font-mono px-1.5 py-px rounded {(t.country_code || 'GLOBAL') === 'GLOBAL' ? 'bg-emerald-950 border border-emerald-700 text-emerald-300' : 'bg-indigo-950 border border-indigo-700 text-indigo-300'}">{countryName(t.country_code)}</span>
+                    {' '}{t.subject || 'General'}{t.institution_name ? ` • ${t.institution_name}` : ''} • {stats.grades} grades • {stats.courses} courses • {stats.lessons} lessons
+                  </span>
+                  {#if t.description}<span class="text-[10px] text-slate-400 block mt-0.5 line-clamp-2">{t.description}</span>{/if}
+                </div>
+                {#if tGrades.length === 0}
+                  <button onclick={() => enrollInTrack(t.id, t.name)} disabled={!!enrollingTrackId || enrolled}
+                    class="px-4 py-2 rounded-xl text-[10px] font-bold transition shrink-0 {enrolled ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50'}">
+                    {enrolled ? 'Enrolled ✓' : enrollingTrackId === t.id ? 'Enrolling…' : 'Select'}
+                  </button>
+                {/if}
+              </div>
+              {#if tGrades.length > 0}
+                <div class="px-3.5 pb-3.5 space-y-1.5">
+                  <p class="text-[9px] uppercase font-mono tracking-widest text-slate-500 font-bold">Choose a grade to enroll{enrolled ? ' (currently enrolled ✓)' : ''}</p>
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each tGrades as g (g.id)}
+                      {@const gEnrolled = enrolled && String(appState.studentGradeLevelId) === g.grade_level}
+                      <button onclick={() => enrollInTrack(t.id, t.name, g.grade_level)} disabled={!!enrollingTrackId || gEnrolled}
+                        class="px-3 py-1.5 rounded-lg text-[10px] font-bold border transition {gEnrolled ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-indigo-500 disabled:opacity-50'}">
+                        {gEnrolled ? `${g.label} ✓` : enrollingTrackId === t.id ? '…' : g.label}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <p class="text-[11px] text-slate-600 text-center py-6">No tracks for this country yet.</p>
+          {/each}
         </div>
       </div>
     </div>

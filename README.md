@@ -152,7 +152,10 @@ Guards: the institution curriculum endpoints require an institution account (stu
 |----------|---------|
 | `TURSO_DATABASE_URL` | Turso database connection URL |
 | `TURSO_AUTH_TOKEN` | Turso authentication token |
-| `GEMINI_API_KEY` | Google Gemini API key for AI tutoring |
+| `GEMINI_API_KEY` | Google Gemini API key — fallback tutor provider |
+| `AI_API_KEY` | OpenAI-compatible API key for the AI tutor (OpenAI, OpenRouter, Ollama…) |
+| `AI_BASE_URL` | Chat-completions base URL (default `https://api.openai.com/v1`) |
+| `AI_MODEL` | Tutor model (default `gpt-4o-mini`) |
 | `STRIPE_SECRET_KEY` | Stripe secret key for payments |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook secret crediting student spots (`POST /api/stripe/webhook`) |
 | `APP_URL` | Base URL for payment redirects and student invite links (`/join/STU-XXXXXX`) |

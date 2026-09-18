@@ -45,6 +45,7 @@ const ROUTE_MAP: Record<string, string> = {
   '/tasks': 'tasks',
   '/profile': 'profile',
   '/forums': 'collaborate',
+  '/messages': 'messages',
 };
 
 const REVERSE_ROUTE: Record<string, string> = {
@@ -54,6 +55,7 @@ const REVERSE_ROUTE: Record<string, string> = {
   'tasks': '/tasks',
   'profile': '/profile',
   'collaborate': '/forums',
+  'messages': '/messages',
 };
 
 function getPathFromTab(tab: string): string {
@@ -178,6 +180,7 @@ function saveSession() {
       isOnboarded: appState.isOnboarded,
       isOnboardingComplete: appState.isOnboardingComplete,
       onboardingCurriculum: appState.onboardingCurriculum,
+      selectedOnboardingTrackId: appState.selectedOnboardingTrackId,
     }));
   } catch { /* ignore */ }
 }
@@ -352,7 +355,7 @@ export const appState = $state({
 
   // Class Studio / Onboarding class catalog
   availableClasses: [] as Array<{ id: string; track_id: string; title: string; description: string; subject: string; grade_level: string; estimated_minutes: number; game_path: string; has_quiz?: boolean }>,
-  availableTracks: [] as Array<{ id: string; name: string; description: string; grade_level: string; subject: string; institution_id?: string; institution_name?: string; class_count?: number }>,
+  availableTracks: [] as Array<{ id: string; name: string; description: string; grade_level: string; subject: string; country_code?: string; institution_id?: string; institution_name?: string; class_count?: number }>,
   // Academy browsing: the logged-in user's institution (school classes first).
   myInstitution: null as null | { id: string; name: string },
   // Academy browse tree: published tracks with nested grades → courses → lessons.
@@ -367,7 +370,7 @@ export const appState = $state({
   isStudioLessonLoading: false,
   studioLessonError: "" as string,
   isClassesLoading: false,
-  selectedOnboardingTrackId: "" as string,
+  selectedOnboardingTrackId: (initSession as any).selectedOnboardingTrackId || "" as string,
   quizScore: 0,
   currentLessonComponent: null as LessonComponent | null,
   currentLessonHash: "" as string,
@@ -419,6 +422,17 @@ export const appState = $state({
   newPostTitle: "",
   newPostContent: "",
   newPostCategory: "General",
+  // Direct messages (users ↔ tutors ↔ school).
+  dmConversations: [] as Array<{ user_id: string; name: string; type: string; last_content: string; last_at: string; last_from_me: boolean; unread: number }>,
+  dmUnreadTotal: 0,
+  dmDirectory: [] as Array<{ id: string; name: string; email: string; type: string }>,
+  dmOther: null as null | { id: string; name: string; type: string },
+  dmMessages: [] as Array<{ id: string; sender_id: string; content: string; is_read: boolean; created_at: string }>,
+  dmInput: "" as string,
+  dmRecipientId: "" as string,
+  isDMsLoading: false,
+  isDMSending: false,
+  dmError: "" as string,
 
   // Tasks
   tasks: [] as Task[],
@@ -482,7 +496,7 @@ export function setTursoSuccessMsg(v: string) { appState.tursoSuccessMsg = v; }
 export function setTursoLoading(v: boolean) { appState.tursoLoading = v; }
 export function setProgress(v: StudentProgress) { appState.progress = v; }
 export function setSelectedCurriculum(v: string) { appState.selectedCurriculum = v; }
-export function setOnboardingCurriculum(v: string) { appState.onboardingCurriculum = v; }
+export function setOnboardingCurriculum(v: string) { appState.onboardingCurriculum = v; saveSession(); }
 export function setIsOnboarded(v: boolean) { appState.isOnboarded = v; saveSession(); }
 
 export function setIsOnboardingComplete(v: boolean) { appState.isOnboardingComplete = v; saveSession(); }
@@ -563,7 +577,7 @@ export async function joinClassByCode(code: string): Promise<{ ok: boolean; erro
   }
 }
 
-export async function selectSystemTrack(trackId: string): Promise<boolean> {
+export async function selectSystemTrack(trackId: string, trackName?: string, gradeLevel?: string): Promise<boolean> {
   try {
     const res = await fetch("/api/studio/select-track", {
       method: "POST",
@@ -573,6 +587,24 @@ export async function selectSystemTrack(trackId: string): Promise<boolean> {
     });
     if (!res.ok) return false;
     appState.selectedOnboardingTrackId = trackId;
+    if (trackName) appState.onboardingCurriculum = trackName;
+    if (gradeLevel) appState.studentGradeLevelId = gradeLevel;
+    saveSession();
+    // Persist the display name + grade on the account too, so a fresh login shows them.
+    if (trackName || gradeLevel) {
+      try {
+        await fetch("/api/update-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            email: appState.loginEmail,
+            ...(trackName ? { academicTrack: trackName } : {}),
+            ...(gradeLevel ? { gradeLevel } : {}),
+          }),
+        });
+      } catch { /* select-track already persisted the enrollment */ }
+    }
     return true;
   } catch {
   }
@@ -991,6 +1023,48 @@ export async function fetchMyInstitution() {
   } catch { /* browsing works without it */ }
 }
 
+// Refresh the account from the database (type, grade, country, enrolled
+// curriculum track) so Profile always shows saved values, not stale locals.
+export async function refreshAccountFromServer(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/session", { credentials: "same-origin" });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data.authenticated || !data.user) return false;
+    const u = data.user;
+    const serverType = String(u.type || "");
+    let mappedRole: typeof appState.landingAuthRole = "water-student";
+    if (serverType === "Water Student") mappedRole = "water-student";
+    else if (serverType === "Independent Student") mappedRole = "independent-student";
+    else if (serverType === "School Student") mappedRole = "school-student";
+    else if (serverType === "Tutor") mappedRole = "tutor";
+    else if (serverType === "Institution") mappedRole = "institution";
+    appState.landingAuthRole = mappedRole;
+    appState.studentTrackType = mappedRole === "institution" ? appState.studentTrackType : mappedRole;
+    appState.studentName = u.name || appState.studentName;
+    if (u.country) appState.studentCountry = u.country;
+    if (u.gradeLevel) appState.studentGradeLevelId = u.gradeLevel;
+    if (u.academicTrack) appState.onboardingCurriculum = u.academicTrack;
+    appState.isUserActivated = !!u.isActivated;
+    appState.hasSystemPermission = !!u.hasSystemPermission;
+    // Enrolled curriculum track (drives Academy + Profile).
+    try {
+      const trackRes = await fetch("/api/studio/my-track", { credentials: "same-origin" });
+      if (trackRes.ok) {
+        const trackData = await trackRes.json();
+        if (trackData.track?.id) {
+          appState.selectedOnboardingTrackId = trackData.track.id;
+          appState.onboardingCurriculum = trackData.track.name || appState.onboardingCurriculum;
+        }
+      }
+    } catch { /* track stays as-is */ }
+    saveSession();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchBrowseTree() {
   appState.isBrowseTreeLoading = true;
   try {
@@ -1156,6 +1230,78 @@ export async function handleLikeReply(replyId: string) {
     const data = await res.json();
     appState.threadReplies = appState.threadReplies.map(r => r.id === replyId ? { ...r, likes: data.likes } : r);
   } catch {}
+}
+
+// ─── Direct messages ───
+export async function fetchDMConversations() {
+  try {
+    const res = await fetch("/api/messages/conversations", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.dmConversations = data.conversations || [];
+    appState.dmUnreadTotal = data.total_unread || 0;
+  } catch { /* messages tab shows the empty state */ }
+}
+
+export async function fetchDMDirectory() {
+  try {
+    const res = await fetch("/api/messages/directory", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.dmDirectory = data.users || [];
+  } catch { /* compose box stays empty */ }
+}
+
+export async function openDMConversation(userId: string, name?: string) {
+  appState.dmOther = { id: userId, name: name || "", type: "" };
+  appState.dmMessages = [];
+  appState.isDMsLoading = true;
+  appState.dmError = "";
+  try {
+    const res = await fetch(`/api/messages/with/${encodeURIComponent(userId)}`, { credentials: "same-origin" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Failed to open conversation");
+    appState.dmOther = data.other;
+    appState.dmMessages = data.messages || [];
+    // Reading clears this thread's unread — refresh the list counts.
+    fetchDMConversations();
+  } catch (err: any) {
+    appState.dmError = err.message || "Failed to open conversation";
+  } finally {
+    appState.isDMsLoading = false;
+  }
+}
+
+export function closeDMConversation() {
+  appState.dmOther = null;
+  appState.dmMessages = [];
+  appState.dmRecipientId = "";
+}
+
+export async function handleSendDM() {
+  const content = appState.dmInput.trim();
+  const recipientId = appState.dmOther?.id || appState.dmRecipientId;
+  if (!content || !recipientId || appState.isDMSending) return;
+  appState.isDMSending = true;
+  appState.dmError = "";
+  try {
+    const res = await fetch("/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ recipient_id: recipientId, content }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Failed to send message");
+    appState.dmMessages = [...appState.dmMessages, data];
+    appState.dmInput = "";
+    appState.dmRecipientId = "";
+    fetchDMConversations();
+  } catch (err: any) {
+    appState.dmError = err.message || "Failed to send message";
+  } finally {
+    appState.isDMSending = false;
+  }
 }
 
 export async function handleDeleteCommunityPost(postId: string): Promise<boolean> {
@@ -1382,7 +1528,7 @@ export async function handleSendMessage(textToSend?: string) {
   if (!textToSend) appState.chatInput = "";
   appState.isTutorTyping = true;
   try {
-    const response = await fetch("/api/gemini/tutoring", {
+    const response = await fetch("/api/ai/tutor", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: [studentMessage],

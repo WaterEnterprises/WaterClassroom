@@ -16,6 +16,7 @@ import { paymentRoutes } from "./routes/payments";
 import { adminStudioRoutes } from "./routes/admin-studio";
 import { institutionCurriculumRoutes } from "./routes/institution-curriculum";
 import { tutorRoutes } from "./routes/tutor";
+import { messageRoutes } from "./routes/messages";
 import { aiRoutes } from "./routes/ai";
 
 export const app = new Hono();
@@ -39,6 +40,7 @@ app.route("/api/institution/curriculum", institutionCurriculumRoutes);
 app.route("/api/progress", progressRoutes);
 app.route("/api/tasks", taskRoutes);
 app.route("/api/tutor", tutorRoutes);
+app.route("/api/messages", messageRoutes);
 // Class Studio: admin track/class authoring, game uploads, and the public
 // endpoints used by onboarding (/api/studio/available-tracks, /available-classes,
 // /select-track, /my-track)

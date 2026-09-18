@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @font-face {
@@ -28,6 +27,19 @@ body {
   background-color: #051329;
   color: #f8fafc;
   overflow-x: hidden;
+}
+
+/* Edge-to-edge (Capacitor + notched browsers): keep chrome clear of
+   system bars while content draws behind them. */
+.safe-area-top {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+.safe-area-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+.safe-area-x {
+  padding-left: max(env(safe-area-inset-left), 0px);
+  padding-right: max(env(safe-area-inset-right), 0px);
 }
 
 /* Custom scrollbar */

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Water Classroom</string>
+    <string name="title_activity_main">Water Classroom</string>
+    <string name="package_name">app.waterclassroom.app</string>
+    <string name="custom_url_scheme">app.waterclassroom.app</string>
+</resources>

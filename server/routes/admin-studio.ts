@@ -409,7 +409,7 @@ adminStudioRoutes.post("/upload-game", async (c) => {
 
 adminStudioRoutes.get("/available-tracks", async (c) => {
   const res = await getDb().execute({
-    sql: `SELECT t.id, t.name, t.description, t.grade_level, t.subject, t.institution_id, u.name AS institution_name,
+    sql: `SELECT t.id, t.name, t.description, t.grade_level, t.subject, t.country_code, t.institution_id, u.name AS institution_name,
                  (SELECT COUNT(*) FROM admin_classes cl WHERE cl.track_id = t.id AND cl.is_published = 1) AS class_count
           FROM admin_tracks t LEFT JOIN turso_records u ON u.id = t.institution_id
           WHERE t.is_published = 1 ORDER BY t.created_at DESC`,
@@ -437,7 +437,7 @@ adminStudioRoutes.get("/available-classes", async (c) => {
 // sitting directly in a grade and ungrouped lessons). One request.
 adminStudioRoutes.get("/browse-tree", async (c) => {
   const tracksRes = await getDb().execute({
-    sql: `SELECT t.id, t.name, t.description, t.grade_level, t.subject, t.institution_id, u.name AS institution_name,
+    sql: `SELECT t.id, t.name, t.description, t.grade_level, t.subject, t.country_code, t.institution_id, u.name AS institution_name,
                  (SELECT COUNT(*) FROM admin_classes cl WHERE cl.track_id = t.id AND cl.is_published = 1) AS class_count
           FROM admin_tracks t LEFT JOIN turso_records u ON u.id = t.institution_id
           WHERE t.is_published = 1 ORDER BY t.created_at DESC`,
