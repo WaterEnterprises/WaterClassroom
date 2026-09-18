@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appState, handleLandingAuthSubmit, executeSendMessage, calculateInstitutionalBulkCost, setLandingAuthRole, setLandingAuthMode, setLandingAuthErrors, setLoginEmail, setLoginAccessKey, setRegName, setRegSchoolName, setRegRepName, setRegStudentVolume, setRegBillingCycle, setSchoolEnrollCode, setStudentBillingCycle, setCalcStudents, setCalcBilling, setContactName, setContactEmail, setContactMsg, setExpandedFaq } from '../lib/store.svelte';
+  import { appState, handleLandingAuthSubmit, executeSendMessage, calculateInstitutionalBulkCost, setLandingAuthRole, setLandingAuthMode, setLandingAuthErrors, setLoginEmail, setLoginAccessKey, setRegName, setRegSchoolName, setRegRepName, setRegStudentVolume, setRegBillingCycle, setSchoolEnrollCode, setStudentBillingCycle, setCalcStudents, setCalcBilling, setContactName, setContactEmail, setContactMsg, setExpandedFaq, lookupInviteCode } from '../lib/store.svelte';
   import { ArrowRight, Compass, Cpu, Building, Calculator, Heart, ChevronDown } from 'lucide-svelte';
   import { fly, fade } from 'svelte/transition';
 
@@ -11,6 +11,11 @@
     } else if (appState.landingAuthErrors.email) {
       setLandingAuthErrors({ ...appState.landingAuthErrors, email: undefined });
     }
+  };
+
+  const onBlurInviteCode = () => {
+    const code = (appState.schoolEnrollCode || "").trim().toUpperCase();
+    if (/^(STU|TUT)-/.test(code) && code.length >= 8) lookupInviteCode(code);
   };
 
   const onBlurPassword = () => {
@@ -155,7 +160,12 @@
             {/if}
 
             <!-- Portal description -->
-            {#if appState.landingAuthRole !== "institution"}
+            {#if appState.landingAuthRole === "tutor"}
+              <div class="bg-[#3a2a0b] border border-amber-900/30 rounded-xl p-3 text-xs text-amber-300 space-y-1">
+                <span class="font-bold text-white block text-[10px] uppercase font-mono tracking-wider">🎓 Tutor Portal</span>
+                {appState.landingAuthMode === "login" ? "Sign in to access your assigned classes, students, and moderation tools." : "Register with your school's tutor invite code — Academy access plus your assigned classes, students, and forum moderation."}
+              </div>
+            {:else if appState.landingAuthRole !== "institution"}
               <div class="bg-[#0b2940] border border-blue-900/30 rounded-xl p-3 text-xs text-blue-300 space-y-1">
                 <span class="font-bold text-white block text-[10px] uppercase font-mono tracking-wider">🎓 Student Portal</span>
                 {appState.landingAuthMode === "login" ? "Sign in to access your curriculum, AI tutor, and learning dashboard." : "Register to begin your learning journey. Choose your plan (Water School, Independent, or School-enrolled) during onboarding."}
@@ -171,6 +181,18 @@
             <!-- REGISTER: Student extra fields -->
             {#if appState.landingAuthMode === "register" && appState.landingAuthRole !== "institution"}
               <div class="space-y-3 animate-fade-in">
+                {#if appState.inviteCodeFromUrl}
+                  <div class="rounded-xl border border-emerald-700/50 bg-emerald-950/40 p-3 text-xs text-emerald-200">
+                    <span class="font-bold text-white block text-[10px] uppercase font-mono tracking-wider">🎓 You were invited!</span>
+                    {#if appState.inviteLookup.status === "valid" && appState.inviteLookup.kind === "tutor"}
+                      {appState.inviteLookup.schoolName} invited you as a <strong>tutor</strong> — your code is filled in below. Add your name, use your invited email, and create a password to activate your Tutor account.
+                    {:else if appState.inviteLookup.status === "valid"}
+                      {appState.inviteLookup.schoolName} invited you — your code is filled in below. Just add your name, use your invited email, and create a password.
+                    {:else}
+                      Your invite code is filled in below — add your name, use your invited email, and create a password.
+                    {/if}
+                  </div>
+                {/if}
                 <div class="space-y-1">
                   <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">Full Name <span class="text-rose-400">*</span></label>
                   <input type="text" required placeholder="e.g. Alice Vance"
@@ -179,11 +201,20 @@
                   {#if appState.landingAuthErrors.name}<p class="text-rose-400 text-[10px] mt-0.5 font-mono">⚠ {appState.landingAuthErrors.name}</p>{/if}
                 </div>
                 <div class="space-y-1">
-                  <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">School Enrollment Code (Optional)</label>
-                  <input type="text" placeholder="e.g. W-CLASS-2026"
-                    value={appState.schoolEnrollCode} oninput={(e) => setSchoolEnrollCode((e.target as HTMLInputElement).value.toUpperCase())}
+                  <label class="text-[10px] uppercase font-mono text-slate-400 font-bold block">School / Invite Code (Optional)</label>
+                  <input type="text" placeholder="e.g. STU-7F3K2M"
+                    value={appState.schoolEnrollCode} oninput={(e) => { setSchoolEnrollCode((e.target as HTMLInputElement).value.toUpperCase()); if (appState.inviteLookup.status !== "idle") appState.inviteLookup = { status: "idle", kind: "", schoolName: "", studentName: "", gradeLevel: "", error: "" }; }}
+                    onblur={onBlurInviteCode}
                     class="w-full rounded-xl bg-slate-900 border border-slate-700 px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 uppercase tracking-widest font-mono" />
-                  <p class="text-[9px] text-slate-500 mt-0.5">Enter your school's access code if you have one.</p>
+                  {#if appState.inviteLookup.status === "checking"}
+                    <p class="text-[9px] text-slate-400 mt-0.5 font-mono">Checking invite code…</p>
+                  {:else if appState.inviteLookup.status === "valid"}
+                    <p class="text-[9px] text-emerald-300 mt-0.5 font-mono">✓ Invited by {appState.inviteLookup.schoolName} — free account, billed to your school. Sign up with your invited email.</p>
+                  {:else if appState.inviteLookup.status === "invalid"}
+                    <p class="text-[9px] text-rose-400 mt-0.5 font-mono">⚠ {appState.inviteLookup.error}</p>
+                  {:else}
+                    <p class="text-[9px] text-slate-500 mt-0.5">Paste the personal invite code from your school email (links + activates you instantly), or a school-wide code.</p>
+                  {/if}
                 </div>
                 <p class="text-[10px] text-slate-500 font-mono">
                   💰 Choose your plan during onboarding: Water Student ($19/mo), Independent ($15/mo), or School Student ($12/mo, billed to school).

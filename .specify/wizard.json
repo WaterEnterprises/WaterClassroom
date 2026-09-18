@@ -1,9 +1,0 @@
-{
-  "ai": "opencode",
-  "script": "ps",
-  "here": true,
-  "noGit": true,
-  "ignoreAgentTools": false,
-  "debug": true,
-  "lastProjectName": "WaterClassroom"
-}

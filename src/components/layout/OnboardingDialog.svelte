@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { appState, handleOnboardingNext, handleOnboardingBack, setIsOnboarded, setIsOnboardingComplete, setOnboardingCurriculum, setLandingAuthRole, setStudentCountry, setStudentProgramId, setStudentTrackType, setStudentBillingCycle, setStudentGradeLevelId, setEnrollmentType, setSchoolEnrollCode } from '../../lib/store.svelte';
-  import { Globe, Compass, GraduationCap, BookOpen, ShieldCheck, ArrowLeft, ChevronRight, Check, MapPin } from 'lucide-svelte';
+  import { appState, handleOnboardingNext, handleOnboardingBack, setIsOnboarded, setIsOnboardingComplete, setOnboardingCurriculum, setLandingAuthRole, setStudentCountry, setStudentProgramId, setStudentTrackType, setStudentBillingCycle, setStudentGradeLevelId, setEnrollmentType, setSchoolEnrollCode, fetchAvailableClasses, selectSystemTrack, setSelectedOnboardingTrackId, joinClassByCode } from '../../lib/store.svelte';
+  import { Globe, Compass, GraduationCap, BookOpen, ShieldCheck, ArrowLeft, ChevronRight, Check, MapPin, Layers, RefreshCw, Gamepad2, Sparkles, KeyRound, Plus } from 'lucide-svelte';
   import { COUNTRIES, getFilteredPrograms, getFilteredCategories, PROGRAMS, getCountryGradeLevels, getCountryStages, STUDENT_TRACKS } from '../../lib/curriculumData';
   import { fade, scale, fly } from 'svelte/transition';
 
-  const totalSteps = 6;
+  const totalSteps = 7;
   const selectedCountry = $derived(COUNTRIES.find(c => c.code === appState.studentCountry));
   const filteredPrograms = $derived(appState.studentCountry ? getFilteredPrograms(appState.studentCountry) : []);
   const filteredCategories = $derived(appState.studentCountry ? getFilteredCategories(appState.studentCountry) : []);
@@ -14,6 +14,38 @@
   const selectedGrade = $derived(countryGradeLevels.find(g => g.id === appState.studentGradeLevelId));
   const selectedStage = $derived(countryStages.find(s => s.key === selectedGrade?.stage));
   const selectedTrack = $derived(STUDENT_TRACKS.find(t => t.id === appState.studentTrackType));
+
+  // ─── Available classes (created by the system in the Class Studio) ───
+  const hasAvailableClasses = $derived(appState.availableClasses.length > 0 || appState.availableTracks.length > 0);
+
+  // Join a single class by its institution-issued code
+  let joinCodeInput = $state('');
+  let joinCodeBusy = $state(false);
+  let joinCodeMsg = $state('');
+  let joinCodeOk = $state(false);
+
+  async function handleJoinByCode() {
+    if (joinCodeBusy || !joinCodeInput.trim()) return;
+    joinCodeBusy = true;
+    joinCodeMsg = '';
+    const result = await joinClassByCode(joinCodeInput);
+    joinCodeBusy = false;
+    if (result.ok) {
+      joinCodeOk = true;
+      joinCodeMsg = `Joined “${result.classTitle}” — it's in your Academy.`;
+      joinCodeInput = '';
+    } else {
+      joinCodeOk = false;
+      joinCodeMsg = result.error || 'Could not join that class.';
+    }
+  }
+
+  $effect(() => {
+    // Lazily load the class catalog when the user reaches the classes step (5)
+    if (appState.onboardingStep === 5 && appState.availableTracks.length === 0 && appState.availableClasses.length === 0 && !appState.isClassesLoading) {
+      fetchAvailableClasses();
+    }
+  });
 
   const clearOnboardingState = () => {
     try { localStorage.removeItem("wc_onboarding_state"); } catch { /* ignore */ }
@@ -62,6 +94,10 @@
           isOnboarded: true,
         })
       });
+      // If the student picked a system-created track in step 5, persist the enrollment.
+      if (appState.selectedOnboardingTrackId) {
+        await selectSystemTrack(appState.selectedOnboardingTrackId);
+      }
     } catch { /* server update is best-effort */ }
 
     clearOnboardingState();
@@ -72,15 +108,162 @@
     { id: "homeschool", label: "Homeschooled", desc: "Learning at home with family / parent guidance", icon: "🏠" },
     { id: "school", label: "Enrolled at a School", desc: "I have a school enrollment code or access key", icon: "🏫" },
   ];
+
+  // ─── Institution onboarding: a dedicated 3-step flow (institutions are NOT
+  // students — skip grade/tracks/billing and go straight to the dashboard). ───
+  const INSTITUTION_KINDS = [
+    { id: "K-12 School", icon: "🏫", desc: "Primary & secondary education institution" },
+    { id: "Homeschool Co-Op", icon: "🏠", desc: "Group of families learning together" },
+    { id: "Tutoring Center", icon: "📚", desc: "Supplementary education & tutoring services" },
+    { id: "University / Higher-Ed", icon: "🎓", desc: "Colleges, universities & adult education" },
+    { id: "Corporate Training", icon: "💼", desc: "Workforce training & professional development" },
+    { id: "Other", icon: "🌐", desc: "Any other educational organization" },
+  ];
+
+  const isInstitutionOnboarding = $derived(
+    appState.landingAuthRole === "institution" && (!appState.isOnboarded || !appState.isOnboardingComplete)
+  );
+  const instStep = $derived(Math.min(appState.onboardingStep, 3));
+
+  let instKind = $state("");
+  let instCompleting = $state(false);
+  let instError = $state("");
+
+  function instNext() { appState.onboardingStep = Math.min(appState.onboardingStep + 1, 3); }
+  function instBack() { appState.onboardingStep = Math.max(appState.onboardingStep - 1, 1); }
+
+  async function completeInstitutionOnboarding() {
+    if (instCompleting) return;
+    instCompleting = true;
+    instError = "";
+    try {
+      await fetch("/api/update-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          email: appState.loginEmail,
+          kindOfSchool: instKind || "Other",
+          country: appState.studentCountry || "",
+          isOnboarded: true,
+        }),
+      });
+      appState.kindOfSchool = instKind || "Other";
+      appState.isOnboarded = true;
+      appState.isOnboardingComplete = true;
+      appState.isUserActivated = true;
+      clearOnboardingState();
+    } catch (err: any) {
+      instError = err.message || "Could not save your settings. Please try again.";
+    } finally {
+      instCompleting = false;
+    }
+  }
 </script>
 
-{#if !appState.isOnboarded || (!appState.isOnboardingComplete && !appState.isUserActivated)}
+{#if isInstitutionOnboarding}
+  <!-- ═══ Institution onboarding (3 steps, different from the student wizard) ═══ -->
+  <div transition:fade={{ duration: 200 }} class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div transition:scale={{ start: 0.95 }} class="frosted-glass-dark p-5 sm:p-8 rounded-3xl max-w-2xl w-full border border-indigo-500/20 space-y-6 my-4">
+      <div class="flex items-center justify-between gap-1 mb-2">
+        {#each [1, 2, 3] as step}
+          <div class="flex items-center gap-1 flex-1">
+            <div class="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold transition-all {instStep === step
+              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20 scale-110'
+              : instStep > step ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-500'}">
+              {#if instStep > step}<Check class="w-3 h-3" />{:else}{step}{/if}
+            </div>
+            {#if step < 3}<div class="flex-1 h-0.5 rounded {instStep > step ? 'bg-emerald-600' : 'bg-slate-800'}"></div>{/if}
+          </div>
+        {/each}
+      </div>
+
+      {#if instStep === 1}
+        <div transition:fly={{ x: 20 }} class="space-y-5 animate-fade-in">
+          <div class="text-center space-y-2">
+            <div class="w-14 h-14 bg-indigo-950 border border-indigo-500/30 rounded-full flex items-center justify-center text-indigo-400 mx-auto">
+              <Globe class="w-7 h-7" />
+            </div>
+            <h3 class="text-2xl font-extrabold text-white">Where is your institution based?</h3>
+            <p class="text-xs text-slate-400">We'll localize dates, examples, and region-specific curriculum options.</p>
+          </div>
+          <div class="max-h-64 overflow-y-auto custom-scrollbar pr-1">
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {#each COUNTRIES as ctry (ctry.code)}
+                <button onclick={() => setStudentCountry(ctry.code)}
+                  class="px-3 py-2.5 rounded-xl text-xs transition border {appState.studentCountry === ctry.code
+                    ? 'bg-indigo-600/20 border-indigo-500 text-white'
+                    : 'bg-slate-950/50 border-slate-800 text-slate-300 hover:border-slate-600'}">
+                  <span class="mr-1.5">{ctry.flag}</span>{ctry.name}
+                </button>
+            {/each}
+            </div>
+          </div>
+        </div>
+      {:else if instStep === 2}
+        <div transition:fly={{ x: 20 }} class="space-y-5 animate-fade-in">
+          <div class="text-center space-y-2">
+            <div class="w-14 h-14 bg-indigo-950 border border-indigo-500/30 rounded-full flex items-center justify-center text-indigo-400 mx-auto">
+              <GraduationCap class="w-7 h-7" />
+            </div>
+            <h3 class="text-2xl font-extrabold text-white">What kind of institution are you?</h3>
+            <p class="text-xs text-slate-400">This shapes your dashboard, defaults, and available curriculum packs.</p>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+            {#each INSTITUTION_KINDS as k (k.id)}
+              <button onclick={() => instKind = k.id}
+                class="text-left px-4 py-3 rounded-xl transition border {instKind === k.id
+                  ? 'bg-indigo-600/20 border-indigo-500 text-white'
+                  : 'bg-slate-950/50 border-slate-800 text-slate-300 hover:border-slate-600'}">
+                <span class="text-sm font-bold flex items-center gap-2">{k.icon} {k.id}</span>
+                <span class="text-[10px] text-slate-500 block mt-0.5">{k.desc}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {:else}
+        <div transition:fly={{ x: 20 }} class="space-y-5 animate-fade-in text-center">
+          <div class="w-14 h-14 bg-emerald-950 border border-emerald-500/30 rounded-full flex items-center justify-center text-emerald-400 mx-auto">
+            <Sparkles class="w-7 h-7" />
+          </div>
+          <h3 class="text-2xl font-extrabold text-white">You're all set{appState.regSchoolName ? `, ${appState.regSchoolName}` : ''}!</h3>
+          <p class="text-xs text-slate-400 max-w-md mx-auto">Your institution dashboard is ready — build your customized tracks in the <strong class="text-slate-200">Studio</strong> tab (start blank or import any Water track, then add grades, courses & lessons), add tutors, and share class join codes with your students.{#if appState.hasSystemPermission} You also have <strong class="text-indigo-300">system access</strong> to author the global K-12 curriculum in the same <strong class="text-indigo-300">Studio</strong> tab.{/if}</p>
+          {#if instError}<p class="text-[10px] text-red-400 font-bold">{instError}</p>{/if}
+          <button onclick={completeInstitutionOnboarding}
+            disabled={instCompleting}
+            class="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-extrabold uppercase tracking-wider transition">
+            {instCompleting ? 'Setting up…' : 'Go to Institution Dashboard'}
+
+          </button>
+
+        </div>
+      {/if}
+
+      <!-- Nav buttons -->
+      <div class="flex items-center justify-between pt-2">
+        <button onclick={instBack} disabled={instStep === 1}
+          class="px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-white disabled:opacity-30 transition flex items-center gap-1">
+          <ArrowLeft class="w-3.5 h-3.5" /> Back
+        </button>
+        {#if instStep < 3}
+          <button onclick={instNext} disabled={instStep === 1 && !appState.studentCountry}
+            class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold transition flex items-center gap-1.5">
+            Continue <ChevronRight class="w-3.5 h-3.5" />
+
+          </button>
+        {:else}
+          <span></span>
+        {/if}
+      </div>
+    </div>
+  </div>
+{:else if !appState.isOnboarded || (!appState.isOnboardingComplete && !appState.isUserActivated)}
   <div transition:fade={{ duration: 200 }} class="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
     <div transition:scale={{ start: 0.95 }} class="frosted-glass-dark p-5 sm:p-8 rounded-3xl max-w-2xl w-full border border-blue-500/20 space-y-6 my-4">
 
       <!-- Step Progress -->
       <div class="flex items-center justify-between gap-1 mb-2">
-        {#each [1, 2, 3, 4, 5, 6] as step}
+        {#each [1, 2, 3, 4, 5, 6, 7] as step}
           <div class="flex items-center gap-1 flex-1">
             <div class="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold transition-all {appState.onboardingStep === step
               ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20 scale-110'
@@ -93,7 +276,7 @@
                 {step}
               {/if}
             </div>
-            {#if step < 6}
+            {#if step < 7}
               <div class="flex-1 h-0.5 rounded {appState.onboardingStep > step ? 'bg-emerald-600' : 'bg-slate-800'}"></div>
             {/if}
           </div>
@@ -300,8 +483,106 @@
         </div>
       {/if}
 
-      <!-- Step 5: Enrollment Type -->
+      <!-- Step 5: Available Classes (created by the system) -->
       {#if appState.onboardingStep === 5}
+        <div transition:fly={{ x: 20 }} class="space-y-5 animate-fade-in">
+          <div class="text-center space-y-2">
+            <div class="w-14 h-14 bg-cyan-950 border border-cyan-500/30 rounded-full flex items-center justify-center text-cyan-400 mx-auto">
+              <Layers class="w-7 h-7" />
+            </div>
+            <h3 class="text-2xl font-extrabold text-white">Available Classes</h3>
+            <p class="text-xs text-slate-400">These classes were created by the system / your school. Pick a track to join — or skip to keep the default curriculum.</p>
+          </div>
+
+          {#if appState.isClassesLoading}
+            <div class="text-center py-10">
+              <RefreshCw class="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
+              <p class="text-xs text-slate-400 mt-3">Loading available classes…</p>
+            </div>
+          {:else if !hasAvailableClasses}
+            <div class="text-center py-10 text-xs text-slate-500">
+              <Layers class="w-8 h-8 mx-auto mb-2 text-slate-700" />
+              <p>No system classes have been published yet.</p>
+              <p class="text-[10px] text-slate-600 mt-1">You can skip this step — the default curriculum will be used.</p>
+            </div>
+          {:else}
+            <div class="space-y-4 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+              {#each appState.availableTracks as track (track.id)}
+                {@const trackClasses = appState.availableClasses.filter(cl => cl.track_id === track.id)}
+                <div class="rounded-2xl border transition {appState.selectedOnboardingTrackId === track.id ? 'border-cyan-500 bg-cyan-950/20' : 'border-slate-800 bg-slate-950/50'}">
+                  <button
+                    onclick={() => setSelectedOnboardingTrackId(appState.selectedOnboardingTrackId === track.id ? '' : track.id)}
+                    class="w-full text-left p-4 rounded-2xl transition"
+                  >
+                    <div class="flex items-start justify-between gap-3">
+                      <div>
+                        <span class="text-sm font-bold text-white block">{track.name}</span>
+                        <span class="text-[10px] text-slate-400">{track.description || 'System track'}{track.institution_name ? ` — by ${track.institution_name}` : ''}</span>
+                      </div>
+                      <div class="flex items-center gap-2 shrink-0">
+                        <span class="px-2 py-0.5 text-[9px] font-mono bg-slate-900 text-slate-300 rounded">{track.class_count ?? trackClasses.length} classes</span>
+                        {#if appState.selectedOnboardingTrackId === track.id}
+                          <Check class="w-4 h-4 text-cyan-400" />
+                        {/if}
+                      </div>
+                    </div>
+                  </button>
+
+                  {#if appState.selectedOnboardingTrackId === track.id && trackClasses.length > 0}
+                    <div class="px-4 pb-4 space-y-1.5 animate-fade-in">
+                      {#each trackClasses as cls (cls.id)}
+                        <div class="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-950/70 border border-slate-800">
+                          <div>
+                            <span class="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
+                              {#if cls.game_path}<Gamepad2 class="w-3 h-3 text-emerald-400" />{/if}
+                              {cls.title}
+                            </span>
+                            <span class="text-[9px] text-slate-500">{cls.subject} • Grade {cls.grade_level} • {cls.estimated_minutes} min</span>
+                          </div>
+                          <span class="text-[8px] uppercase font-mono text-emerald-400">Included</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            {#if appState.selectedOnboardingTrackId}
+              <p class="text-[10px] text-cyan-300 text-center flex items-center justify-center gap-1.5">
+                <Sparkles class="w-3 h-3" /> You'll be enrolled in this track's classes when onboarding completes.
+              </p>
+            {/if}
+          {/if}
+
+          <!-- Join a single class by its institution-issued code (always available at this step) -->
+          <div class="rounded-2xl border border-emerald-800/50 bg-slate-950/50 p-4 space-y-2">
+            <p class="text-[10px] uppercase font-mono tracking-widest text-emerald-400 font-bold flex items-center gap-1.5">
+              <KeyRound class="w-3.5 h-3.5" /> Have a class code from your school?
+            </p>
+            <div class="flex gap-2">
+              <input
+                bind:value={joinCodeInput}
+                onkeydown={(e) => { if (e.key === 'Enter') handleJoinByCode(); }}
+                placeholder="e.g. WC-7F3K2M"
+                class="flex-1 px-3.5 py-2 rounded-xl bg-slate-950/80 border border-slate-700 text-sm text-white font-mono tracking-widest uppercase outline-none focus:border-emerald-500 placeholder:normal-case placeholder:tracking-normal placeholder:font-sans"
+              />
+              <button onclick={handleJoinByCode} disabled={joinCodeBusy || !joinCodeInput.trim()}
+                class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-bold transition flex items-center gap-1.5">
+                {#if joinCodeBusy}<RefreshCw class="w-3.5 h-3.5 animate-spin" />{:else}<Plus class="w-3.5 h-3.5" /> Join{/if}
+              </button>
+            </div>
+            {#if joinCodeMsg}
+              <p class="text-[10px] font-bold {joinCodeOk ? 'text-emerald-300' : 'text-red-400'}">{joinCodeMsg}</p>
+            {/if}
+            {#if appState.joinedClassTitles.length > 0}
+              <p class="text-[10px] text-emerald-300/80">Classes joined this session: {appState.joinedClassTitles.join(', ')}</p>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Step 6: Enrollment Type -->
+      {#if appState.onboardingStep === 6}
         <div transition:fly={{ x: 20 }} class="space-y-5 animate-fade-in">
           <div class="text-center space-y-2">
             <div class="w-14 h-14 bg-purple-950 border border-purple-500/30 rounded-full flex items-center justify-center text-purple-400 mx-auto">
@@ -358,8 +639,8 @@
         </div>
       {/if}
 
-      <!-- Step 6: Review & Complete + Payment Redirect -->
-      {#if appState.onboardingStep === 6}
+      <!-- Step 7: Review & Complete + Payment Redirect -->
+      {#if appState.onboardingStep === 7}
         <div transition:fly={{ x: 20 }} class="space-y-5 animate-fade-in">
           <div class="text-center space-y-2">
             <div class="w-14 h-14 bg-emerald-950 border border-emerald-500/30 rounded-full flex items-center justify-center text-emerald-400 mx-auto">
@@ -446,7 +727,7 @@
               || (appState.onboardingStep === 2 && !appState.studentTrackType)
               || (appState.onboardingStep === 3 && !appState.studentProgramId)
               || (appState.onboardingStep === 4 && !appState.studentGradeLevelId)
-              || (appState.onboardingStep === 5 && !appState.enrollmentType)}
+              || (appState.onboardingStep === 6 && !appState.enrollmentType)}
             class="px-6 py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs transition flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next <ChevronRight class="w-3.5 h-3.5" />

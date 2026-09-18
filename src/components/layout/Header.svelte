@@ -25,22 +25,24 @@
 
     <div class="flex items-center gap-4 flex-col sm:flex-row w-full sm:w-auto justify-end">
       {#if appState.isLoggedIn}
-        <div transition:fade={{ duration: 200 }} class="flex items-center gap-3 bg-[#0a162f]/80 px-4 py-1.5 rounded-full border border-blue-400/25 shadow-inner">
-          <div class="flex items-center gap-1">
-            <Flame class="w-4 h-4 text-amber-500 fill-amber-400 animate-bounce" />
-            <span class="text-xs font-bold text-amber-200">{appState.progress.streakDays} Day Streak</span>
+        {#if appState.landingAuthRole !== 'institution'}
+          <div transition:fade={{ duration: 200 }} class="flex items-center gap-3 bg-[#0a162f]/80 px-4 py-1.5 rounded-full border border-blue-400/25 shadow-inner">
+            <div class="flex items-center gap-1">
+              <Flame class="w-4 h-4 text-amber-500 fill-amber-400 animate-bounce" />
+              <span class="text-xs font-bold text-amber-200">{appState.progress.streakDays} Day Streak</span>
+            </div>
+            <div class="h-4 w-px bg-blue-500/30"></div>
+            <div class="flex items-center gap-1">
+              <TrendingUp class="w-4 h-4 text-emerald-400" />
+              <span class="text-xs font-bold text-emerald-300">{appState.progress.points} Points</span>
+            </div>
+            <div class="h-4 w-px bg-blue-500/30"></div>
+            <div class="flex items-center gap-1">
+              <Award class="w-4 h-4 text-cyan-400" />
+              <span class="text-xs font-bold text-cyan-300">Lvl {appState.progress.level}</span>
+            </div>
           </div>
-          <div class="h-4 w-px bg-blue-500/30"></div>
-          <div class="flex items-center gap-1">
-            <TrendingUp class="w-4 h-4 text-emerald-400" />
-            <span class="text-xs font-bold text-emerald-300">{appState.progress.points} Points</span>
-          </div>
-          <div class="h-4 w-px bg-blue-500/30"></div>
-          <div class="flex items-center gap-1">
-            <Award class="w-4 h-4 text-cyan-400" />
-            <span class="text-xs font-bold text-cyan-300">Lvl {appState.progress.level}</span>
-          </div>
-        </div>
+        {/if}
         <div transition:fade={{ duration: 200 }} class="flex items-center gap-3">
           <button onclick={() => navigateTo('profile')} class="flex items-center gap-2 bg-[#111c35]/50 border border-blue-900/30 rounded-xl px-3 py-1.5 hover:border-blue-500/50 transition cursor-pointer">
             <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white text-[10px] font-extrabold">

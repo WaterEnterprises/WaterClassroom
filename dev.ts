@@ -18,11 +18,13 @@ watch(SRC, { recursive: true }, (event, filename) => {
   buildTimeout = setTimeout(async () => {
     console.log(`\n🔄 Rebuilding... (${filename})`);
     try {
-      // Rebuild frontend only
+      // Rebuild frontend + Tailwind CSS (new utility classes in edited
+      // components must be regenerated — otherwise new screens look unstyled)
       const { SveltePlugin } = await import("bun-plugin-svelte");
       const { rmSync, mkdirSync, cpSync, existsSync } = await import("fs");
 
       const DIST = join(import.meta.dir, "dist");
+      await Bun.$`bun x @tailwindcss/cli -i src/index.css -o ${DIST}/tailwind.css`;
       const frontendResult = await Bun.build({
         entrypoints: [join(import.meta.dir, "src", "index.ts")],
         outdir: DIST,

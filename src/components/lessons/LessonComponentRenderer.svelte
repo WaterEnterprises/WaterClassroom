@@ -1,5 +1,6 @@
 <script lang="ts">
   import { appState, updateProgressOnServer } from '../../lib/store.svelte';
+  import { GENERATED_CLASSES } from '../../curriculum/registry';
   import MathNumbers from '../../../lessons/components/math-g1-numbers-flappy-3a7f1.svelte';
   import MathCounting from '../../../lessons/components/math-g1-counting-quiz-9b2e4.svelte';
   import MathShapes from '../../../lessons/components/math-g1-shapes-identify-4c1d8.svelte';
@@ -30,6 +31,9 @@
   function awardEngagement(points: number) {
     updateProgressOnServer({ ...appState.progress, points: appState.progress.points + points });
   }
+
+  // Studio-generated class components take precedence over the static game map.
+  const StudioClass = $derived(appState.currentLessonComponent ? GENERATED_CLASSES[appState.currentLessonComponent.hash] : null);
 </script>
 
 {#if !appState.currentLessonComponent}
@@ -46,6 +50,8 @@
     <p class="text-sm text-red-300 font-bold">Lesson component unavailable</p>
     <p class="text-xs text-slate-400">{appState.lessonError}</p>
   </div>
+{:else if StudioClass}
+  <StudioClass.component />
 {:else}
   {@const Lesson = componentMap[appState.currentLessonComponent.hash]}
   {#if Lesson}

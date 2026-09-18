@@ -36,6 +36,11 @@ bun.lockb
 .idea/
 .vscode/
 
+# Runtime lesson content (per-lesson folders; DB keeps the index).
+# NOTE: local disk is ephemeral on most free hosts — mount a persistent
+# disk at ./content for production.
+/content/
+
 # Logs
 *.log
 dist/icon.png

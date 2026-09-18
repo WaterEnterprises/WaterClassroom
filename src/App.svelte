@@ -13,7 +13,9 @@
   import ForumsPage from './pages/ForumsPage.svelte';
   import ProfilePage from './pages/ProfilePage.svelte';
   import ExamsPage from './pages/ExamsPage.svelte';
-  import { BookOpen, Cpu, ClipboardList, MessageSquare, LayoutDashboard, Building, User, Shield } from 'lucide-svelte';
+  import StudentsPage from './pages/StudentsPage.svelte';
+  import StudioPage from './pages/StudioPage.svelte';
+  import { BookOpen, ClipboardList, MessageSquare, LayoutDashboard, Building, User, Shield, GraduationCap, Users } from 'lucide-svelte';
   import { fade, scale } from 'svelte/transition';
 
   const isInstitution = $derived(appState.landingAuthRole === 'institution');
@@ -21,16 +23,17 @@
   const navTabs = $derived(isInstitution
     ? [
         { key: 'dashboard', label: 'School', icon: Building },
+        { key: 'studio', label: 'Studio', icon: GraduationCap },
         { key: 'academy', label: 'Academy', icon: BookOpen },
-        { key: 'tutor', label: 'AI Tutor', icon: Cpu },
+        { key: 'tutor', label: 'Tutors', icon: GraduationCap },
         { key: 'tasks', label: 'Tasks', icon: ClipboardList },
-        { key: 'exams', label: 'Exams', icon: Shield },
+        { key: 'exams', label: 'Students', icon: Users },
         { key: 'collaborate', label: 'Forums', icon: MessageSquare },
       ]
     : [
         { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { key: 'academy', label: 'Academy', icon: BookOpen },
-        { key: 'tutor', label: 'AI Tutor', icon: Cpu },
+        { key: 'tutor', label: 'Tutors', icon: GraduationCap },
         { key: 'tasks', label: 'Tasks', icon: ClipboardList },
         { key: 'exams', label: 'Exams', icon: Shield },
         { key: 'collaborate', label: 'Forums', icon: MessageSquare },
@@ -45,27 +48,42 @@
     {:else}
       <OnboardingDialog />
       <DonateModal />
+      <!-- All pages stay mounted (hidden, not destroyed) so tab switches
+           preserve each screen's state: forms, chat, drill-downs, scroll. -->
       <ErrorBoundary>
-        <div transition:fade={{ duration: 200 }} class="animate-fade-in">
-            {#if appState.activeTab === 'dashboard'}
-              {#if isInstitution}
-                <SchoolDashboardPage />
-              {:else}
-                <DashboardPage />
-              {/if}
-            {:else if appState.activeTab === 'academy'}
-              <AcademyPage />
-            {:else if appState.activeTab === 'tutor'}
-              <AITutorPage />
-            {:else if appState.activeTab === 'tasks'}
-              <TasksPage />
-            {:else if appState.activeTab === 'exams'}
-              <ExamsPage />
-            {:else if appState.activeTab === 'collaborate'}
-              <ForumsPage />
-            {:else if appState.activeTab === 'profile'}
-              <ProfilePage />
+        <div transition:fade={{ duration: 200 }} class="animate-fade-in" class:hidden={appState.activeTab !== 'dashboard'}>
+            {#if isInstitution}
+              <SchoolDashboardPage />
+            {:else}
+              <DashboardPage />
             {/if}
+        </div>
+        <div class:hidden={appState.activeTab !== 'academy'}>
+          <AcademyPage />
+        </div>
+        <div class:hidden={appState.activeTab !== 'tutor'}>
+          <AITutorPage />
+        </div>
+        <div class:hidden={appState.activeTab !== 'tasks'}>
+          <TasksPage />
+        </div>
+        <div class:hidden={appState.activeTab !== 'exams'}>
+          {#if isInstitution}
+            <StudentsPage />
+          {:else}
+            <ExamsPage />
+          {/if}
+        </div>
+        <div class:hidden={appState.activeTab !== 'collaborate'}>
+          <ForumsPage />
+        </div>
+        {#if isInstitution}
+          <div class:hidden={appState.activeTab !== 'studio'}>
+            <StudioPage />
+          </div>
+        {/if}
+        <div class:hidden={appState.activeTab !== 'profile'}>
+          <ProfilePage />
         </div>
       </ErrorBoundary>
     {/if}

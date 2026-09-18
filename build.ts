@@ -10,8 +10,11 @@ if (existsSync(DIST)) {
 mkdirSync(DIST, { recursive: true });
 
 // 1. Build Tailwind CSS
+// NOTE: must NOT output to dist/index.css — Bun.build writes the Svelte
+// components' extracted <style> blocks to dist/index.css (same basename as
+// the index.js bundle) and would overwrite the Tailwind file.
 console.log("📦 Building Tailwind CSS...");
-await Bun.$`bun x @tailwindcss/cli -i src/index.css -o ${DIST}/index.css --minify`;
+await Bun.$`bun x @tailwindcss/cli -i src/index.css -o ${DIST}/tailwind.css --minify`;
 
 // 2. Bundle Svelte frontend using bun-plugin-svelte
 console.log("📦 Bundling Svelte frontend...");

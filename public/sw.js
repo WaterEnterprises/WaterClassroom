@@ -1,8 +1,9 @@
-const CACHE_NAME = "water-classroom-v1";
+const CACHE_NAME = "water-classroom-v3";
 const ASSETS_TO_CACHE = [
   "/",
   "/index.html",
   "/index.js",
+  "/tailwind.css",
   "/index.css",
   "/icon.png",
   "/manifest.json",

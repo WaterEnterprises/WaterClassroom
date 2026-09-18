@@ -61,7 +61,63 @@ function getPathFromTab(tab: string): string {
 }
 
 function getTabFromPath(path: string): string {
-  return ROUTE_MAP[path] || 'dashboard';
+  if (path === "/join" || path.startsWith("/join/")) return "dashboard";
+  return ROUTE_MAP[path] || "dashboard";
+}
+
+// ─── Student invite deep-link (/join/STU-XXXXXX or ?invite=STU-XXXXXX) ───
+// Runs on boot: pre-fills Register mode + code, then validates via lookup.
+export async function lookupInviteCode(code: string) {
+  const clean = (code || "").trim().toUpperCase();
+  if (!clean) {
+    appState.inviteLookup = { status: "idle", kind: "", schoolName: "", studentName: "", gradeLevel: "", error: "" };
+    return appState.inviteLookup;
+  }
+  appState.inviteLookup = { status: "checking", kind: "", schoolName: "", studentName: "", gradeLevel: "", error: "" };
+  try {
+    const res = await fetch(`/api/invites/${encodeURIComponent(clean)}/lookup`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      appState.inviteLookup = { status: "invalid", kind: "", schoolName: "", studentName: "", gradeLevel: "", error: data.error || "Invite code not found." };
+    } else {
+      const kind = data.kind === "tutor" ? "tutor" : "student";
+      appState.inviteLookup = { status: "valid", kind, schoolName: data.school_name || "", studentName: data.student_name || "", gradeLevel: data.grade_level || "", error: "" };
+      if (data.student_name && !appState.regName) appState.regName = data.student_name;
+      // Tutor links switch the form into tutor mode (student links keep student mode).
+      if (kind === "tutor") appState.landingAuthRole = "tutor";
+    }
+  } catch {
+    appState.inviteLookup = { status: "invalid", kind: "", schoolName: "", studentName: "", gradeLevel: "", error: "Network error — please try again." };
+  }
+  return appState.inviteLookup;
+}
+
+export function consumeInviteFromUrl() {
+  if (typeof window === "undefined") return;
+  try {
+    const url = new URL(window.location.href);
+    let code = "";
+    const joinMatch = url.pathname.match(/^\/join\/([A-Za-z0-9-]+)\/?$/);
+    if (joinMatch) code = joinMatch[1];
+    if (!code) code = url.searchParams.get("invite") || url.searchParams.get("code") || "";
+    code = code.trim().toUpperCase();
+    if (!code) {
+      // No code in URL — restore a previously opened invite code into the field (no mode switch).
+      try {
+        const stored = (localStorage.getItem("wc_invite_code") || "").trim().toUpperCase();
+        if (stored && !appState.schoolEnrollCode) appState.schoolEnrollCode = stored;
+      } catch { /* ignore */ }
+      return;
+    }
+    appState.inviteCodeFromUrl = code;
+    appState.landingAuthMode = "register";
+    appState.landingAuthRole = "water-student";
+    appState.schoolEnrollCode = code;
+    try { localStorage.setItem("wc_invite_code", code); } catch { /* ignore */ }
+    lookupInviteCode(code);
+    // Clean the URL (keep the user on a canonical path, code stays in the form).
+    try { window.history.replaceState({ tab: "dashboard" }, "", "/"); } catch { /* ignore */ }
+  } catch { /* ignore malformed URLs */ }
 }
 
 const ONBOARDING_STORAGE_KEY = "wc_onboarding_state";
@@ -84,6 +140,21 @@ function clearOnboardingState() {
   try { localStorage.removeItem(ONBOARDING_STORAGE_KEY); } catch { /* ignore */ }
 }
 
+// ---------- Favorite tracks (Academy — localStorage, per device) ----------
+const FAV_TRACKS_KEY = "wc_fav_tracks";
+
+function loadFavTracks(): string[] {
+  try {
+    const raw = localStorage.getItem(FAV_TRACKS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+  } catch { return []; }
+}
+
+function saveFavTracks(ids: string[]) {
+  try { localStorage.setItem(FAV_TRACKS_KEY, JSON.stringify(ids)); } catch { /* ignore */ }
+}
+
 // ---------- Session Persistence ----------
 const SESSION_KEY = "wc_session";
 
@@ -103,6 +174,7 @@ function saveSession() {
       loginEmail: appState.loginEmail,
       landingAuthRole: appState.landingAuthRole,
       isUserActivated: appState.isUserActivated,
+      hasSystemPermission: appState.hasSystemPermission,
       isOnboarded: appState.isOnboarded,
       isOnboardingComplete: appState.isOnboardingComplete,
       onboardingCurriculum: appState.onboardingCurriculum,
@@ -160,13 +232,21 @@ export const appState = $state({
   studentName: initSession.studentName || "",
   studentTrack: initSession.studentTrack || "",
   loginEmail: initSession.loginEmail || "",
+  kindOfSchool: (initSession as any).kindOfSchool || "",
   loginAccessKey: "",
   isUserActivated: initSession.isUserActivated || false,
+  hasSystemPermission: initSession.hasSystemPermission || false,
 
   // Landing Auth
-  landingAuthRole: (initSession.landingAuthRole || initOnb.landingAuthRole || "water-student") as "water-student" | "independent-student" | "school-student" | "institution",
+  landingAuthRole: (initSession.landingAuthRole || initOnb.landingAuthRole || "water-student") as "water-student" | "independent-student" | "school-student" | "tutor" | "institution",
   landingAuthMode: "login" as "login" | "register",
   landingAuthErrors: {} as { email?: string; password?: string; form?: string; name?: string; schoolName?: string; repName?: string },
+  // Student invite deep-link (/join/STU-XXXXXX or /join/TUT-XXXXXX)
+  inviteCodeFromUrl: "" as string,
+  inviteLookup: { status: "idle", kind: "", schoolName: "", studentName: "", gradeLevel: "", error: "" } as {
+    status: "idle" | "checking" | "valid" | "invalid";
+    kind: "" | "student" | "tutor"; schoolName: string; studentName: string; gradeLevel: string; error: string;
+  },
   regName: "",
   regSchoolName: "",
   regRepName: "",
@@ -229,24 +309,61 @@ export const appState = $state({
   institutionName: "" as string,
   institutionGradeRange: "K-12",
   institutionStudents: [] as Array<{ id: string; name: string; email: string; grade_level: string; points: number; streak_days: number; last_active: string }>,
+  institutionInvites: [] as Array<{ id: string; name: string; email: string; grade_level: string; invite_code: string; status: string; claimed_name: string; created_at: string; claimed_at: string }>,
+  institutionTutorInvites: [] as Array<{ id: string; name: string; email: string; subjects: string[]; invite_code: string; status: string; claimed_name: string; created_at: string; claimed_at: string; expires_at: string; last_emailed_at: string; email_status: string; invite_link: string }>,
+  // Tutor workspace: classes assigned to the logged-in tutor, with students.
+  tutorClasses: [] as Array<{ id: string; title: string; subject: string; grade_level: string; institution_name: string; has_quiz: boolean; students: Array<any> }>,
+  isTutorClassesLoading: false,
+  // Students screen (institution): tracks → grades → students + quiz scores.
+  studentsSummary: [] as Array<any>,
+  isStudentsSummaryLoading: false,
   institutionTutors: [] as Array<{ id: string; name: string; email: string; subjects: string[]; grade_levels: string[] }>,
+  // Seat-based billing: paid student spots vs consumed.
+  institutionSeats: { paid: 50, used: 0 } as { paid: number; used: number },
   isAdminLoading: false,
   adminError: "" as string,
   assignedTutorId: "" as string,
 
   // Community
   communityPosts: [] as Array<{ id: string; author_name: string; author_level: number; title: string; content: string; likes: number; replies: number; category: string; created_at: string }>,
+  // Open thread + its replies
+  activeThread: null as null | { id: string; author_name: string; author_level: number; title: string; content: string; likes: number; replies: number; category: string; created_at: string },
+  threadReplies: [] as Array<{ id: string; post_id: string; author_name: string; author_level: number; content: string; likes: number; created_at: string }>,
+  newReplyContent: "" as string,
+  isThreadLoading: false,
+  isSendingReply: false,
+  threadError: "" as string,
   activeCommunityTopic: "grade-all" as string,
   activeCommunitySubject: "" as string,
   communityTopics: [] as Array<{ id: string; label: string; subtopics: string[] }>,
   isSubmittingPost: false,
   postSubmitError: "" as string,
+  postSubmitNotice: "" as string,
 
   // Academy / Lessons
   selectedLesson: null as Lesson | null,
   activeQuiz: null as Quiz | null,
   quizAnswers: [] as number[],
   showQuizResult: false,
+
+  // Class Studio / Onboarding class catalog
+  availableClasses: [] as Array<{ id: string; track_id: string; title: string; description: string; subject: string; grade_level: string; estimated_minutes: number; game_path: string; has_quiz?: boolean }>,
+  availableTracks: [] as Array<{ id: string; name: string; description: string; grade_level: string; subject: string; institution_id?: string; institution_name?: string; class_count?: number }>,
+  // Academy browsing: the logged-in user's institution (school classes first).
+  myInstitution: null as null | { id: string; name: string },
+  // Academy browse tree: published tracks with nested grades → courses → lessons.
+  browseTree: [] as Array<any>,
+  isBrowseTreeLoading: false,
+  // Academy: favorite (starred) track ids — persisted per device.
+  favoriteTrackIds: loadFavTracks() as string[],
+  joinedClassTitles: [] as string[],
+  joinedClasses: [] as Array<{ id: string; title: string; subject: string; grade_level: string; institution_name: string; enrolled_at: string }>,
+  // Runtime studio lesson (JSON via view endpoint — no build step)
+  activeStudioLesson: null as null | { id: string; track_id: string; title: string; description: string; subject: string; grade_level: string; estimated_minutes: number; game_path: string; content_html: string; quiz_markdown: string },
+  isStudioLessonLoading: false,
+  studioLessonError: "" as string,
+  isClassesLoading: false,
+  selectedOnboardingTrackId: "" as string,
   quizScore: 0,
   currentLessonComponent: null as LessonComponent | null,
   currentLessonHash: "" as string,
@@ -336,6 +453,10 @@ export const appState = $state({
 });
 
 // ---------- Setters ----------
+// Deep-link invite (?invite= / /join/:code) — runs once on boot, after state exists.
+if (typeof window !== 'undefined') {
+  try { consumeInviteFromUrl(); } catch { /* ignore */ }
+}
 
 export function setActiveTab(v: string) { appState.activeTab = v; }
 export function setIsLoggedIn(v: boolean) { appState.isLoggedIn = v; if (!v) { clearSession(); fetch("/api/logout", { method: "POST" }).catch(() => {}); } else saveSession(); }
@@ -362,6 +483,97 @@ export function setIsOnboarded(v: boolean) { appState.isOnboarded = v; saveSessi
 
 export function setIsOnboardingComplete(v: boolean) { appState.isOnboardingComplete = v; saveSession(); }
 export function setStudentCountry(v: string) { appState.studentCountry = v; }
+
+// ---------- Class Studio / Onboarding class catalog ----------
+export async function fetchAvailableClasses() {
+  appState.isClassesLoading = true;
+  try {
+    const [tracksRes, classesRes] = await Promise.all([
+      fetch("/api/studio/available-tracks"),
+      fetch("/api/studio/available-classes"),
+    ]);
+    if (tracksRes.ok) {
+      const data = await tracksRes.json();
+      appState.availableTracks = data.tracks || [];
+    }
+    if (classesRes.ok) {
+      const data = await classesRes.json();
+      appState.availableClasses = data.classes || [];
+    }
+  } catch (err) {
+    console.warn("Failed to load available classes:", err);
+  } finally {
+    appState.isClassesLoading = false;
+  }
+}
+
+// Report a studio-class quiz result (or plain completion) so the institution sees per-student progress.
+export async function reportClassResult(classId: string, score: number, total: number, completion = false): Promise<any | null> {
+  try {
+    const res = await fetch("/api/progress/class-result", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ class_id: classId, score, total, completion }),
+    });
+    if (!res.ok) return null;
+    return await res.json().catch(() => ({}));
+  } catch {
+    return null;
+  }
+}
+
+export function setSelectedOnboardingTrackId(v: string) {
+  appState.selectedOnboardingTrackId = v;
+}
+
+// Academy: star/unstar a Water Classroom track (favorites survive reloads).
+export function toggleFavoriteTrack(trackId: string) {
+  const ids = appState.favoriteTrackIds.includes(trackId)
+    ? appState.favoriteTrackIds.filter((id) => id !== trackId)
+    : [...appState.favoriteTrackIds, trackId];
+  appState.favoriteTrackIds = ids;
+  saveFavTracks(ids);
+}
+
+// Student joins a single institution class directly by its join code.
+export async function joinClassByCode(code: string): Promise<{ ok: boolean; error?: string; classTitle?: string }> {
+  const clean = (code || "").trim();
+  if (!clean) return { ok: false, error: "Enter a class code first." };
+  try {
+    const res = await fetch("/api/institution/curriculum/join-class", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ code: clean }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `Join failed (${res.status})` };
+    if (data.class_title && !appState.joinedClassTitles.includes(data.class_title)) {
+      appState.joinedClassTitles = [...appState.joinedClassTitles, data.class_title];
+    }
+    fetchJoinedClasses();
+    return { ok: true, classTitle: data.class_title };
+  } catch {
+    return { ok: false, error: "Network error — please try again." };
+  }
+}
+
+export async function selectSystemTrack(trackId: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/studio/select-track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ track_id: trackId }),
+    });
+    if (!res.ok) return false;
+    appState.selectedOnboardingTrackId = trackId;
+    return true;
+  } catch {
+  }
+  return false;
+}
 export function setStudentTrackType(v: string) { appState.studentTrackType = v; }
 export function setStudentProgramId(v: string) { appState.studentProgramId = v; }
 export function setStudentGradeLevelId(v: string) { appState.studentGradeLevelId = v; }
@@ -486,6 +698,38 @@ export function handleCompleteOnboarding() {
   updateProgressOnServer(updated);
 }
 
+// Apply a successful login response (user fields, session, navigation) shared by
+// the normal login path and the wrong-door auto-recovery retry.
+function applyLoginSuccess(data: any) {
+  appState.studentName = data.user.name || appState.loginEmail.split("@")[0];
+  appState.studentTrack = data.user.academicTrack || "";
+  appState.isUserActivated = !!data.user.isActivated;
+  appState.hasSystemPermission = !!data.user.hasSystemPermission;
+  const serverType = data.user.type || "";
+  let mappedRole: typeof appState.landingAuthRole = "water-student";
+  if (serverType === "Water Student") mappedRole = "water-student";
+  else if (serverType === "Independent Student") mappedRole = "independent-student";
+  else if (serverType === "School Student") mappedRole = "school-student";
+  else if (serverType === "Tutor") mappedRole = "tutor";
+  else if (serverType === "Institution") mappedRole = "institution";
+  appState.landingAuthRole = mappedRole;
+  appState.isOnboarded = !!data.user.isOnboarded;
+  if (data.user.isOnboarded) {
+    appState.isOnboardingComplete = true;
+    appState.isUserActivated = true;
+  }
+  if (data.user.country) appState.studentCountry = data.user.country;
+  if (data.user.gradeLevel) appState.studentGradeLevelId = data.user.gradeLevel;
+  if (data.user.enrollmentType) appState.enrollmentType = data.user.enrollmentType;
+  if (data.user.academicTrack) appState.onboardingCurriculum = data.user.academicTrack;
+  appState.isLoggedIn = true;
+  saveSession();
+  navigateTo("dashboard");
+  if (!data.user.isActivated) {
+    appState.landingAuthErrors = { form: "Account pending activation. Please complete onboarding to set up your account." };
+  }
+}
+
 export async function handleLandingAuthSubmit(e: Event) {
   e.preventDefault();
   appState.tursoLoading = true;
@@ -518,37 +762,31 @@ export async function handleLandingAuthSubmit(e: Event) {
       const response = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: appState.loginEmail.trim(), passcode: appState.loginAccessKey })
+        body: JSON.stringify({ email: appState.loginEmail.trim(), passcode: appState.loginAccessKey, role: appState.landingAuthRole })
       });
       if (response.ok) {
         const data = await response.json();
-        appState.studentName = data.user.name || appState.loginEmail.split("@")[0];
-        appState.studentTrack = data.user.academicTrack || "";
-        appState.isUserActivated = !!data.user.isActivated;
-        const serverType = data.user.type || "";
-        let mappedRole: typeof appState.landingAuthRole = "water-student";
-        if (serverType === "Water Student") mappedRole = "water-student";
-        else if (serverType === "Independent Student") mappedRole = "independent-student";
-        else if (serverType === "School Student") mappedRole = "school-student";
-        else if (serverType === "Institution") mappedRole = "institution";
-        appState.landingAuthRole = mappedRole;
-        appState.isOnboarded = !!data.user.isOnboarded;
-        if (data.user.isOnboarded) {
-          appState.isOnboardingComplete = true;
-          appState.isUserActivated = true;
-        }
-        if (data.user.country) appState.studentCountry = data.user.country;
-        if (data.user.gradeLevel) appState.studentGradeLevelId = data.user.gradeLevel;
-        if (data.user.enrollmentType) appState.enrollmentType = data.user.enrollmentType;
-        if (data.user.academicTrack) appState.onboardingCurriculum = data.user.academicTrack;
-        appState.isLoggedIn = true;
-        saveSession();
-        navigateTo("dashboard");
-        if (!data.user.isActivated) {
-          appState.landingAuthErrors = { form: "Account pending activation. Please complete onboarding to set up your account." };
-        }
+        applyLoginSuccess(data);
       } else {
         const errData = await response.json().catch(() => ({}));
+        const wrongDoor =
+          (errData.error || "").includes("Please use the Institution login") ||
+          (errData.error || "").includes("Please use the Student login");
+        if (wrongDoor) {
+          // Wrong-door auto-recovery: retry the same credentials through the other door
+          // so the user isn't stuck fighting the role toggle.
+          const otherRole = appState.landingAuthRole === "institution" ? "water-student" : "institution";
+          const retry = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: appState.loginEmail.trim(), passcode: appState.loginAccessKey, role: otherRole }),
+          });
+          if (retry.ok) {
+            const rdata = await retry.json();
+            applyLoginSuccess(rdata);
+            return;
+          }
+        }
         appState.landingAuthErrors = { form: errData.error || "Invalid email or password. Please try again or switch to Register." };
       }
     } else {
@@ -573,6 +811,9 @@ export async function handleLandingAuthSubmit(e: Event) {
       } else if (appState.landingAuthRole === "school-student") {
         typeStr = "School Student";
         kindStr = "School-Enrolled Learner";
+      } else if (appState.landingAuthRole === "tutor") {
+        typeStr = "Tutor";
+        kindStr = "Tutor";
       }
 
       const regPayload: Record<string, any> = {
@@ -590,7 +831,7 @@ export async function handleLandingAuthSubmit(e: Event) {
       const registerRes = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(regPayload)
+        body: JSON.stringify({ ...regPayload, role: appState.landingAuthRole })
       });
       if (registerRes.ok) {
         const newRecord = await registerRes.json();
@@ -728,6 +969,57 @@ export function loadLessonComponent(hash: string) {
     });
 }
 
+export async function fetchJoinedClasses() {
+  try {
+    const res = await fetch("/api/institution/curriculum/my-classes", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.joinedClasses = data.classes || [];
+  } catch { /* academy works without the list */ }
+}
+
+export async function fetchMyInstitution() {
+  try {
+    const res = await fetch("/api/my-institution", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.myInstitution = data.institution || null;
+  } catch { /* browsing works without it */ }
+}
+
+export async function fetchBrowseTree() {
+  appState.isBrowseTreeLoading = true;
+  try {
+    const res = await fetch("/api/studio/browse-tree", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.browseTree = data.tracks || [];
+  } catch { /* browsing works without it */ }
+  finally { appState.isBrowseTreeLoading = false; }
+}
+
+export async function openStudioLesson(classId: string) {
+  if (!classId) return;
+  appState.isStudioLessonLoading = true;
+  appState.studioLessonError = "";
+  appState.activeStudioLesson = null;
+  try {
+    const res = await fetch(`/api/institution/curriculum/lessons/${encodeURIComponent(classId)}/view`, { credentials: "same-origin" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Could not open lesson (${res.status})`);
+    appState.activeStudioLesson = data;
+  } catch (err: any) {
+    appState.studioLessonError = err.message || "Could not open lesson";
+  } finally {
+    appState.isStudioLessonLoading = false;
+  }
+}
+
+export function closeStudioLesson() {
+  appState.activeStudioLesson = null;
+  appState.studioLessonError = "";
+}
+
 export function setCurrentLessonComponent(v: LessonComponent | null) { appState.currentLessonComponent = v; }
 export function setCurrentLessonHash(v: string) { appState.currentLessonHash = v; }
 export function setIsLessonLoading(v: boolean) { appState.isLessonLoading = v; }
@@ -755,15 +1047,29 @@ export async function handleLoadInstitutionData() {
   appState.isAdminLoading = true;
   appState.adminError = "";
   try {
-    const [rosterRes, tutorsRes] = await Promise.all([
+    const [rosterRes, tutorsRes, invitesRes, tutorInvitesRes] = await Promise.all([
       fetch("/api/institution/roster", { credentials: "same-origin" }),
       fetch("/api/institution/tutors", { credentials: "same-origin" }),
+      fetch("/api/institution/roster/invites", { credentials: "same-origin" }),
+      fetch("/api/institution/roster/tutor-invites", { credentials: "same-origin" }),
     ]);
     if (rosterRes.ok) {
       const data = await rosterRes.json();
       appState.institutionId = data.institution_id;
       appState.institutionName = data.institution_name || "";
       appState.institutionStudents = data.students || [];
+      appState.institutionSeats = {
+        paid: Number(data.paid_seats || 50),
+        used: Number(data.used_seats || 0),
+      };
+    }
+    if (invitesRes.ok) {
+      const data = await invitesRes.json();
+      appState.institutionInvites = data.invites || [];
+    }
+    if (tutorInvitesRes.ok) {
+      const data = await tutorInvitesRes.json();
+      appState.institutionTutorInvites = data.invites || [];
     }
     if (tutorsRes.ok) {
       const data = await tutorsRes.json();
@@ -794,6 +1100,7 @@ export async function handleLoadCommunityPosts(topicId: string, subject?: string
 export async function handleCreateCommunityPost(title: string, content: string, category: string, gradeLevel: string) {
   appState.isSubmittingPost = true;
   appState.postSubmitError = "";
+  appState.postSubmitNotice = "";
   try {
     const res = await fetch("/api/community/posts", {
       method: "POST",
@@ -801,10 +1108,16 @@ export async function handleCreateCommunityPost(title: string, content: string, 
       credentials: "same-origin",
       body: JSON.stringify({ title, content, category, grade_level: gradeLevel })
     });
-    if (!res.ok) throw new Error("Failed to create post");
-    const data = await res.json();
-    const newPost = { id: data.id, author_name: appState.studentName, author_level: appState.progress.level, title, content, likes: 0, replies: 0, category, created_at: new Date().toISOString() };
-    appState.communityPosts = [newPost, ...appState.communityPosts];
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.details || "Failed to create post");
+    if (data.status === "pending") {
+      // Young-grade posts await review — they are saved but hidden until approved.
+      appState.postSubmitNotice = "Saved! Your thread is pending review and will appear once approved.";
+    } else {
+      const newPost = { id: data.id, author_name: appState.studentName, author_level: appState.progress.level, title, content, likes: 0, replies: 0, category, created_at: new Date().toISOString() };
+      appState.communityPosts = [newPost, ...appState.communityPosts];
+      appState.postSubmitNotice = "";
+    }
     appState.newPostTitle = "";
     appState.newPostContent = "";
   } catch (err: any) {
@@ -823,7 +1136,137 @@ export async function handleLikeCommunityPost(postId: string) {
     if (!res.ok) return;
     const data = await res.json();
     appState.communityPosts = appState.communityPosts.map(p => p.id === postId ? { ...p, likes: data.likes } : p);
+    if (appState.activeThread?.id === postId) {
+      appState.activeThread = { ...appState.activeThread, likes: data.likes };
+    }
   } catch {}
+}
+
+export async function handleLikeReply(replyId: string) {
+  try {
+    const res = await fetch(`/api/community/replies/${replyId}/like`, {
+      method: "POST",
+      credentials: "same-origin"
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.threadReplies = appState.threadReplies.map(r => r.id === replyId ? { ...r, likes: data.likes } : r);
+  } catch {}
+}
+
+export async function handleDeleteCommunityPost(postId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/community/posts/${postId}`, {
+      method: "DELETE",
+      credentials: "same-origin"
+    });
+    if (!res.ok) return false;
+    appState.communityPosts = appState.communityPosts.filter(p => p.id !== postId);
+    if (appState.activeThread?.id === postId) {
+      appState.activeThread = null;
+      appState.threadReplies = [];
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Thread view: open a thread + its replies ───
+export async function openThread(post: { id: string; author_name: string; author_level: number; title: string; content: string; likes: number; replies: number; category: string; created_at: string }) {
+  appState.activeThread = post;
+  appState.threadReplies = [];
+  appState.isThreadLoading = true;
+  appState.threadError = "";
+  try {
+    const res = await fetch(`/api/community/posts/${post.id}/replies`, { credentials: "same-origin" });
+    if (!res.ok) throw new Error("Failed to load replies");
+    const data = await res.json();
+    appState.threadReplies = data.replies || [];
+  } catch (err: any) {
+    appState.threadError = err.message || "Failed to load replies";
+  } finally {
+    appState.isThreadLoading = false;
+  }
+}
+
+export function closeThread() {
+  appState.activeThread = null;
+  appState.threadReplies = [];
+  appState.threadError = "";
+  appState.newReplyContent = "";
+}
+
+export async function handleSendReply() {
+  const post = appState.activeThread;
+  const content = appState.newReplyContent.trim();
+  if (!post || !content || appState.isSendingReply) return;
+  appState.isSendingReply = true;
+  try {
+    const res = await fetch(`/api/community/posts/${post.id}/replies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.details || "Failed to post reply");
+    appState.threadReplies = [...appState.threadReplies, data];
+    appState.newReplyContent = "";
+    appState.communityPosts = appState.communityPosts.map(p =>
+      p.id === post.id ? { ...p, replies: p.replies + 1 } : p
+    );
+    appState.activeThread = { ...post, replies: post.replies + 1 };
+  } catch (err: any) {
+    appState.threadError = err.message || "Failed to post reply";
+  } finally {
+    appState.isSendingReply = false;
+  }
+}
+
+export async function handleDeleteReply(replyId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/community/replies/${replyId}`, {
+      method: "DELETE",
+      credentials: "same-origin"
+    });
+    if (!res.ok) return false;
+    appState.threadReplies = appState.threadReplies.filter(r => r.id !== replyId);
+    if (appState.activeThread) {
+      const n = Math.max((appState.activeThread.replies || 1) - 1, 0);
+      appState.activeThread = { ...appState.activeThread, replies: n };
+      appState.communityPosts = appState.communityPosts.map(p =>
+        p.id === appState.activeThread!.id ? { ...p, replies: n } : p
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchTutorClasses() {
+  if (appState.landingAuthRole !== "tutor") return;
+  appState.isTutorClassesLoading = true;
+  try {
+    const res = await fetch("/api/tutor/classes", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.tutorClasses = data.classes || [];
+  } catch { /* academy works without the list */ }
+  finally { appState.isTutorClassesLoading = false; }
+}
+
+export async function fetchStudentsSummary() {
+  if (appState.landingAuthRole !== "institution") return;
+  appState.isStudentsSummaryLoading = true;
+  try {
+    const res = await fetch("/api/institution/roster/students-summary", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const data = await res.json();
+    appState.studentsSummary = data.tracks || [];
+  } catch { /* screen shows the empty state */ }
+  finally { appState.isStudentsSummaryLoading = false; }
 }
 
 export function computeStreak(lastActiveDate: string): number {
@@ -1072,14 +1515,15 @@ $effect.root(() => {
         const res = await fetch("/api/session");
         const data = await res.json();
         if (data.authenticated && data.user) {
-          appState.studentName = data.user.name || "";
-          appState.studentTrack = data.user.academicTrack || "";
-          appState.isUserActivated = !!data.user.isActivated;
-          const serverType = data.user.type || "";
-          if (serverType === "Water Student") appState.landingAuthRole = "water-student";
-          else if (serverType === "Independent Student") appState.landingAuthRole = "independent-student";
-          else if (serverType === "School Student") appState.landingAuthRole = "school-student";
-          else if (serverType === "Institution") appState.landingAuthRole = "institution";
+        appState.studentName = data.user.name || "";
+        appState.studentTrack = data.user.academicTrack || "";
+        appState.isUserActivated = !!data.user.isActivated;
+        appState.hasSystemPermission = !!data.user.hasSystemPermission;
+        const serverType = data.user.type || "";
+        if (serverType === "Water Student") appState.landingAuthRole = "water-student";
+        else if (serverType === "Institution") appState.landingAuthRole = "institution";
+        else if (serverType === "Independent Student") appState.landingAuthRole = "independent-student";
+        else if (serverType === "School Student") appState.landingAuthRole = "school-student";
           if (data.user.isOnboarded) {
             appState.isOnboarded = true;
             appState.isOnboardingComplete = true;

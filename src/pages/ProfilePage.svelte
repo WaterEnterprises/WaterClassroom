@@ -149,38 +149,6 @@
             <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">Academic Track</span>
             <span class="text-xs text-white font-bold">{appState.onboardingCurriculum}</span>
           </div>
-        </div>
-      </div>
-
-      <!-- Academic Info -->
-      <div class="frosted-glass rounded-2xl p-6 border border-blue-900/30 space-y-4">
-        <h3 class="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2"><GraduationCap class="w-4 h-4 text-emerald-400" /> Academic Details</h3>
-        <div class="space-y-3">
-          <div class="flex justify-between items-center p-3 bg-slate-950/50 rounded-xl">
-            <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">Country</span>
-            <span class="text-xs text-white font-bold">{appState.studentCountry || 'Not set'}</span>
-          </div>
-          <div class="flex justify-between items-center p-3 bg-slate-950/50 rounded-xl">
-            <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">Grade Level</span>
-            <span class="text-xs text-white font-bold">{appState.studentGradeLevelId || 'Not set'}</span>
-          </div>
-          <div class="flex justify-between items-center p-3 bg-slate-950/50 rounded-xl">
-            <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">Enrollment</span>
-            <span class="text-xs text-white font-bold capitalize">{appState.enrollmentType || 'Not set'}</span>
-          </div>
-          <div class="flex justify-between items-center p-3 bg-slate-950/50 rounded-xl">
-            <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">Student Level</span>
-            <span class="text-xs text-white font-bold">Level {appState.progress.level}</span>
-          </div>
-          <div class="flex justify-between items-center p-3 bg-slate-950/50 rounded-xl">
-            <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">XP Points</span>
-            <span class="text-xs text-white font-bold">{appState.progress.points}</span>
-          </div>
-          <div class="flex justify-between items-center p-3 bg-slate-950/50 rounded-xl">
-            <span class="text-[10px] uppercase font-mono text-slate-400 font-bold">Day Streak</span>
-            <span class="text-xs text-white font-bold">{appState.progress.streakDays} days</span>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -205,6 +173,7 @@
           <span class="text-[9px] text-slate-400 font-mono uppercase">Tasks Done</span>
         </div>
       </div>
+    </div>
     </div>
   {/if}
 
